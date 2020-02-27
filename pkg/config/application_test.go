@@ -75,15 +75,14 @@ func TestNewApplicationGroupFailure(t *testing.T) {
 			applicationMod: func(a *Application) {
 				a.Policies = nil
 			},
-			expectedErr: errors.New("failed to add policies: no policies defined"),
+			expectedErr: errors.New("no policies defined"),
 		},
 		{
 			testName: "When adding policies to application group",
 			applicationMod: func(a *Application) {
 				a.Organizations[0].Policies = nil
 			},
-			expectedErr: errors.New("failed to create application org group Org1: failed to add policies: " +
-				"no policies defined"),
+			expectedErr: errors.New("org group 'Org1': no policies defined"),
 		},
 	}
 
@@ -135,12 +134,12 @@ func TestNewApplicationGroupSkipAsForeign(t *testing.T) {
 
 func baseApplication() *Application {
 	return &Application{
-		Policies: createStandardPolicies(),
+		Policies: standardPolicies(),
 		Organizations: []*Organization{
 			{
 				Name:     "Org1",
 				ID:       "Org1MSP",
-				Policies: createApplicationOrgStandardPolicies(),
+				Policies: applicationOrgStandardPolicies(),
 				AnchorPeers: []*AnchorPeer{
 					{Host: "host1", Port: 123},
 				},
@@ -148,7 +147,7 @@ func baseApplication() *Application {
 			{
 				Name:     "Org2",
 				ID:       "Org2MSP",
-				Policies: createApplicationOrgStandardPolicies(),
+				Policies: applicationOrgStandardPolicies(),
 				AnchorPeers: []*AnchorPeer{
 					{Host: "host1", Port: 123},
 				},

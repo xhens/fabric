@@ -7,24 +7,28 @@ SPDX-License-Identifier: Apache-2.0
 package config
 
 import (
+	"bytes"
 	"crypto/rand"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/timestamp"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	mb "github.com/hyperledger/fabric-protos-go/msp"
+	"github.com/hyperledger/fabric/common/policydsl"
 )
 
-// Profile encapsulates basic information for a channel config profile.
-type Profile struct {
+// Channel encapsulates basic information for a channel config profile.
+type Channel struct {
 	Consortium   string
 	Application  *Application
 	Orderer      *Orderer
-	Consortiums  map[string]*Consortium
+	Consortiums  []*Consortium
 	Capabilities map[string]bool
 	Policies     map[string]*Policy
 	ChannelID    string
@@ -67,18 +71,18 @@ type standardConfigPolicy struct {
 	value *cb.Policy
 }
 
-// NewCreateChannelTx creates a create channel tx using the provided config profile.
-func NewCreateChannelTx(profile *Profile, mspConfig *mb.FabricMSPConfig) (*cb.Envelope, error) {
+// NewCreateChannelTx creates a create channel tx using the provided channel config.
+func NewCreateChannelTx(channelConfig *Channel, mspConfig *mb.FabricMSPConfig) (*cb.Envelope, error) {
 	var err error
 
-	if profile == nil {
-		return nil, errors.New("profile is empty")
+	if channelConfig == nil {
+		return nil, errors.New("channel config is required")
 	}
 
-	channelID := profile.ChannelID
+	channelID := channelConfig.ChannelID
 
 	if channelID == "" {
-		return nil, errors.New("channel ID is empty")
+		return nil, errors.New("profile's channel ID is required")
 	}
 
 	config, err := proto.Marshal(mspConfig)
@@ -91,26 +95,26 @@ func NewCreateChannelTx(profile *Profile, mspConfig *mb.FabricMSPConfig) (*cb.En
 		Config: config,
 	}
 
-	ct, err := defaultConfigTemplate(profile, mspconf)
+	ct, err := defaultConfigTemplate(channelConfig, mspconf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create default config template: %v", err)
+		return nil, fmt.Errorf("creating default config template: %v", err)
 	}
 
-	newChannelConfigUpdate, err := newChannelCreateConfigUpdate(channelID, profile, ct, mspconf)
+	newChannelConfigUpdate, err := newChannelCreateConfigUpdate(channelID, channelConfig, ct, mspconf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create channel create config update: %v", err)
+		return nil, fmt.Errorf("creating channel create config update: %v", err)
 	}
 
 	configUpdate, err := proto.Marshal(newChannelConfigUpdate)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal new channel config update: %v", err)
+		return nil, fmt.Errorf("failed marshalling new channel config update: %v", err)
 	}
 
 	newConfigUpdateEnv := &cb.ConfigUpdateEnvelope{
 		ConfigUpdate: configUpdate,
 	}
 
-	env, err := createEnvelope(cb.HeaderType_CONFIG_UPDATE, channelID, newConfigUpdateEnv)
+	env, err := newEnvelope(cb.HeaderType_CONFIG_UPDATE, channelID, newConfigUpdateEnv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create envelope: %v", err)
 	}
@@ -121,7 +125,7 @@ func NewCreateChannelTx(profile *Profile, mspConfig *mb.FabricMSPConfig) (*cb.En
 // SignConfigUpdate signs the given configuration update with a
 // specific signing identity.
 func SignConfigUpdate(configUpdate *cb.ConfigUpdate, signingIdentity *SigningIdentity) (*cb.ConfigSignature, error) {
-	signatureHeader, err := signingIdentity.CreateSignatureHeader()
+	signatureHeader, err := signatureHeader(signingIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create signature header: %v", err)
 	}
@@ -139,7 +143,8 @@ func SignConfigUpdate(configUpdate *cb.ConfigUpdate, signingIdentity *SigningIde
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal config update: %v", err)
 	}
-	configSignature.Signature, err = signingIdentity.Sign(rand.Reader, concatenateBytes(configSignature.SignatureHeader, configUpdateBytes))
+
+	configSignature.Signature, err = signingIdentity.Sign(rand.Reader, concatenateBytes(configSignature.SignatureHeader, configUpdateBytes), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign config update: %v", err)
 	}
@@ -147,63 +152,96 @@ func SignConfigUpdate(configUpdate *cb.ConfigUpdate, signingIdentity *SigningIde
 	return configSignature, nil
 }
 
+func signatureHeader(signingIdentity *SigningIdentity) (*cb.SignatureHeader, error) {
+	buffer := bytes.NewBuffer(nil)
+	err := pem.Encode(buffer, &pem.Block{Type: "CERTIFICATE", Bytes: signingIdentity.Certificate.Raw})
+	if err != nil {
+		return nil, fmt.Errorf("pem encode: %v", err)
+	}
+	idBytes, err := proto.Marshal(&mb.SerializedIdentity{Mspid: signingIdentity.MSPID, IdBytes: buffer.Bytes()})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal serialized identity: %v", err)
+	}
+	nonce, err := newNonce()
+	if err != nil {
+		return nil, err
+	}
+
+	return &cb.SignatureHeader{
+		Creator: idBytes,
+		Nonce:   nonce,
+	}, nil
+}
+
+// newNonce generates a 24-byte nonce using the crypto/rand package.
+func newNonce() ([]byte, error) {
+	nonce := make([]byte, 24)
+
+	_, err := rand.Read(nonce)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get random bytes: %v", err)
+	}
+
+	return nonce, nil
+}
+
 // newChannelGroup defines the root of the channel configuration.
-func newChannelGroup(conf *Profile, mspConfig *mb.MSPConfig) (*cb.ConfigGroup, error) {
+func newChannelGroup(channelConfig *Channel, mspConfig *mb.MSPConfig) (*cb.ConfigGroup, error) {
 	var err error
 
 	channelGroup := newConfigGroup()
 
-	if err = addPolicies(channelGroup, conf.Policies, AdminsPolicyKey); err != nil {
-		return nil, fmt.Errorf("failed to add policies: %v", err)
+	if err = addPolicies(channelGroup, channelConfig.Policies, AdminsPolicyKey); err != nil {
+		return nil, fmt.Errorf("failed to add policies to channel group: %v", err)
 	}
 
 	err = addValue(channelGroup, hashingAlgorithmValue(), AdminsPolicyKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add hashing algorithm value: %v", err)
+		return nil, err
 	}
 
 	err = addValue(channelGroup, blockDataHashingStructureValue(), AdminsPolicyKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add block data hashing structure value: %v", err)
+		return nil, err
 	}
 
-	if conf.Orderer != nil && len(conf.Orderer.Addresses) > 0 {
-		err = addValue(channelGroup, ordererAddressesValue(conf.Orderer.Addresses), ordererAdminsPolicyName)
+	if channelConfig.Orderer != nil && len(channelConfig.Orderer.Addresses) > 0 {
+		err = addValue(channelGroup, ordererAddressesValue(channelConfig.Orderer.Addresses), ordererAdminsPolicyName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to add orderer addresses value: %v", err)
+			return nil, err
 		}
 	}
 
-	if conf.Consortium != "" {
-		err = addValue(channelGroup, consortiumValue(conf.Consortium), AdminsPolicyKey)
+	if channelConfig.Consortium != "" {
+		err = addValue(channelGroup, consortiumValue(channelConfig.Consortium), AdminsPolicyKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to add consoritum value: %v", err)
+			return nil, err
 		}
 	}
 
-	if len(conf.Capabilities) > 0 {
-		err = addValue(channelGroup, capabilitiesValue(conf.Capabilities), AdminsPolicyKey)
+	if len(channelConfig.Capabilities) > 0 {
+		err = addValue(channelGroup, capabilitiesValue(channelConfig.Capabilities), AdminsPolicyKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to add capabilities value: %v", err)
+			return nil, err
 		}
 	}
 
-	if conf.Orderer != nil {
-		channelGroup.Groups[OrdererGroupKey], err = NewOrdererGroup(conf.Orderer, mspConfig)
+	if channelConfig.Orderer != nil {
+		channelGroup.Groups[OrdererGroupKey], err = NewOrdererGroup(channelConfig.Orderer, mspConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create orderer group: %v", err)
 		}
 	}
 
-	if conf.Application != nil {
-		channelGroup.Groups[ApplicationGroupKey], err = NewApplicationGroup(conf.Application, mspConfig)
+	if channelConfig.Application != nil {
+		channelGroup.Groups[ApplicationGroupKey], err = NewApplicationGroup(channelConfig.Application, mspConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create application group: %v", err)
 		}
 	}
 
-	if conf.Consortiums != nil {
-		channelGroup.Groups[ConsortiumsGroupKey], err = NewConsortiumsGroup(conf.Consortiums, mspConfig)
+	if channelConfig.Consortiums != nil {
+		channelGroup.Groups[ConsortiumsGroupKey], err = NewConsortiumsGroup(channelConfig.Consortiums, mspConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create consortiums group: %v", err)
 		}
@@ -240,7 +278,7 @@ func blockDataHashingStructureValue() *standardConfigValue {
 func addValue(cg *cb.ConfigGroup, value *standardConfigValue, modPolicy string) error {
 	v, err := proto.Marshal(value.value)
 	if err != nil {
-		return fmt.Errorf("failed to marshal standard config value: %v", err)
+		return fmt.Errorf("marshalling standard config value '%s': %v", value.key, err)
 	}
 
 	cg.Values[value.key] = &cb.ConfigValue{
@@ -270,12 +308,12 @@ func addPolicies(cg *cb.ConfigGroup, policyMap map[string]*Policy, modPolicy str
 		case ImplicitMetaPolicyType:
 			imp, err := implicitMetaFromString(policy.Rule)
 			if err != nil {
-				return fmt.Errorf("invalid implicit meta policy rule: '%s' error: %v", policy.Rule, err)
+				return fmt.Errorf("invalid implicit meta policy rule: '%s': %v", policy.Rule, err)
 			}
 
 			implicitMetaPolicy, err := proto.Marshal(imp)
 			if err != nil {
-				return fmt.Errorf("failed to marshal implicit meta policy: %v", err)
+				return fmt.Errorf("marshalling implicit meta policy: %v", err)
 			}
 
 			cg.Policies[policyName] = &cb.ConfigPolicy{
@@ -286,14 +324,14 @@ func addPolicies(cg *cb.ConfigGroup, policyMap map[string]*Policy, modPolicy str
 				},
 			}
 		case SignaturePolicyType:
-			sp, err := FromString(policy.Rule)
+			sp, err := policydsl.FromString(policy.Rule)
 			if err != nil {
-				return fmt.Errorf("invalid signature policy rule: '%s' error: %v", policy.Rule, err)
+				return fmt.Errorf("invalid signature policy rule: '%s': %v", policy.Rule, err)
 			}
 
 			signaturePolicy, err := proto.Marshal(sp)
 			if err != nil {
-				return fmt.Errorf("failed to marshal signature policy: %v", err)
+				return fmt.Errorf("marshalling signature policy: %v", err)
 			}
 
 			cg.Policies[policyName] = &cb.ConfigPolicy{
@@ -377,42 +415,13 @@ func mspValue(mspDef *mb.MSPConfig) *standardConfigValue {
 	}
 }
 
-// makeImplicitMetaPolicy creates a new *cb.Policy of cb.Policy_IMPLICIT_META type.
-func makeImplicitMetaPolicy(subPolicyName string, rule cb.ImplicitMetaPolicy_Rule) (*cb.Policy, error) {
-	implicitMetaPolicy, err := proto.Marshal(&cb.ImplicitMetaPolicy{
-		Rule:      rule,
-		SubPolicy: subPolicyName,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal implicit meta policy: %v", err)
-	}
-
-	return &cb.Policy{
-		Type:  int32(cb.Policy_IMPLICIT_META),
-		Value: implicitMetaPolicy,
-	}, nil
-}
-
-// implicitMetaAnyPolicy defines an implicit meta policy whose sub_policy and key is policyname with rule ANY.
-func implicitMetaAnyPolicy(policyName string) (*standardConfigPolicy, error) {
-	implicitMetaPolicy, err := makeImplicitMetaPolicy(policyName, cb.ImplicitMetaPolicy_ANY)
-	if err != nil {
-		return nil, fmt.Errorf("failed to make implicit meta ANY policy: %v", err)
-	}
-
-	return &standardConfigPolicy{
-		key:   policyName,
-		value: implicitMetaPolicy,
-	}, nil
-}
-
 // defaultConfigTemplate generates a config template based on the assumption that
 // the input profile is a channel creation template and no system channel context
 // is available.
-func defaultConfigTemplate(conf *Profile, mspConfig *mb.MSPConfig) (*cb.ConfigGroup, error) {
-	channelGroup, err := newChannelGroup(conf, mspConfig)
+func defaultConfigTemplate(channelConfig *Channel, mspConfig *mb.MSPConfig) (*cb.ConfigGroup, error) {
+	channelGroup, err := newChannelGroup(channelConfig, mspConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create new channel group: %v", err)
+		return nil, err
 	}
 
 	if _, ok := channelGroup.Groups[ApplicationGroupKey]; !ok {
@@ -428,22 +437,23 @@ func defaultConfigTemplate(conf *Profile, mspConfig *mb.MSPConfig) (*cb.ConfigGr
 // newChannelCreateConfigUpdate generates a ConfigUpdate which can be sent to the orderer to create a new channel.
 // Optionally, the channel group of the ordering system channel may be passed in, and the resulting ConfigUpdate
 // will extract the appropriate versions from this file.
-func newChannelCreateConfigUpdate(channelID string, conf *Profile, templateConfig *cb.ConfigGroup, mspConfig *mb.MSPConfig) (*cb.ConfigUpdate, error) {
-	newChannelGroup, err := newChannelGroup(conf, mspConfig)
+func newChannelCreateConfigUpdate(channelID string, channelConfig *Channel, templateConfig *cb.ConfigGroup,
+	mspConfig *mb.MSPConfig) (*cb.ConfigUpdate, error) {
+	newChannelGroup, err := newChannelGroup(channelConfig, mspConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create new channel group: %v", err)
+		return nil, err
 	}
 
-	updt, err := Compute(&cb.Config{ChannelGroup: templateConfig}, &cb.Config{ChannelGroup: newChannelGroup})
+	updt, err := computeConfigUpdate(&cb.Config{ChannelGroup: templateConfig}, &cb.Config{ChannelGroup: newChannelGroup})
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute update: %v", err)
+		return nil, fmt.Errorf("computing update: %v", err)
 	}
 
 	wsValue, err := proto.Marshal(&cb.Consortium{
-		Name: conf.Consortium,
+		Name: channelConfig.Consortium,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal consortium: %v", err)
+		return nil, fmt.Errorf("marshalling consortium: %v", err)
 	}
 
 	// Add the consortium name to create the channel for into the write set as required
@@ -466,24 +476,24 @@ func newConfigGroup() *cb.ConfigGroup {
 	}
 }
 
-// createEnvelope creates an unsigned envelope of type txType using with the marshalled
+// newEnvelope creates an unsigned envelope of type txType using with the marshalled
 // cb.ConfigGroupEnvelope proto message.
-func createEnvelope(
+func newEnvelope(
 	txType cb.HeaderType,
 	channelID string,
 	dataMsg proto.Message,
 ) (*cb.Envelope, error) {
-	payloadChannelHeader := makeChannelHeader(txType, msgVersion, channelID, epoch)
+	payloadChannelHeader := channelHeader(txType, msgVersion, channelID, epoch)
 	payloadSignatureHeader := &cb.SignatureHeader{}
 
 	data, err := proto.Marshal(dataMsg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal envelope data: %v", err)
+		return nil, fmt.Errorf("marshalling envelope data: %v", err)
 	}
 
-	payloadHeader, err := makePayloadHeader(payloadChannelHeader, payloadSignatureHeader)
+	payloadHeader, err := payloadHeader(payloadChannelHeader, payloadSignatureHeader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make payload header: %v", err)
+		return nil, fmt.Errorf("making payload header: %v", err)
 	}
 
 	paylBytes, err := proto.Marshal(
@@ -493,7 +503,7 @@ func createEnvelope(
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %v", err)
+		return nil, fmt.Errorf("marshalling payload: %v", err)
 	}
 
 	env := &cb.Envelope{
@@ -504,13 +514,12 @@ func createEnvelope(
 }
 
 // makeChannelHeader creates a ChannelHeader.
-func makeChannelHeader(headerType cb.HeaderType, version int32, channelID string, epoch uint64) *cb.ChannelHeader {
+func channelHeader(headerType cb.HeaderType, version int32, channelID string, epoch uint64) *cb.ChannelHeader {
 	return &cb.ChannelHeader{
 		Type:    int32(headerType),
 		Version: version,
 		Timestamp: &timestamp.Timestamp{
-			Seconds: time.Now().Unix(),
-			Nanos:   0,
+			Seconds: ptypes.TimestampNow().GetSeconds(),
 		},
 		ChannelId: channelID,
 		Epoch:     epoch,
@@ -518,15 +527,15 @@ func makeChannelHeader(headerType cb.HeaderType, version int32, channelID string
 }
 
 // makePayloadHeader creates a Payload Header.
-func makePayloadHeader(ch *cb.ChannelHeader, sh *cb.SignatureHeader) (*cb.Header, error) {
+func payloadHeader(ch *cb.ChannelHeader, sh *cb.SignatureHeader) (*cb.Header, error) {
 	channelHeader, err := proto.Marshal(ch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal channel header: %v", err)
+		return nil, fmt.Errorf("marshalling channel header: %v", err)
 	}
 
 	signatureHeader, err := proto.Marshal(sh)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal signature header: %v", err)
+		return nil, fmt.Errorf("marshalling signature header: %v", err)
 	}
 
 	return &cb.Header{
@@ -538,10 +547,10 @@ func makePayloadHeader(ch *cb.ChannelHeader, sh *cb.SignatureHeader) (*cb.Header
 // ComputeUpdate computes the config update from a base and modified config transaction.
 func ComputeUpdate(baseConfig, updatedConfig *cb.Config, channelID string) (*cb.ConfigUpdate, error) {
 	if channelID == "" {
-		return nil, errors.New("channel ID is empty")
+		return nil, errors.New("channel ID is required")
 	}
 
-	updt, err := Compute(baseConfig, updatedConfig)
+	updt, err := computeConfigUpdate(baseConfig, updatedConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute update: %v", err)
 	}
@@ -558,13 +567,14 @@ func concatenateBytes(data ...[]byte) []byte {
 	for i := range data {
 		res = append(res, data[i]...)
 	}
+
 	return res
 }
 
-// generateOrgConfigGroup returns an config group for a organization.
+// newOrgConfigGroup returns an config group for a organization.
 // It defines the crypto material for the organization (its MSP).
 // It sets the mod_policy of all elements to "Admins".
-func generateOrgConfigGroup(org *Organization, mspConfig *mb.MSPConfig) (*cb.ConfigGroup, error) {
+func newOrgConfigGroup(org *Organization, mspConfig *mb.MSPConfig) (*cb.ConfigGroup, error) {
 	var err error
 
 	orgGroup := newConfigGroup()
@@ -575,18 +585,18 @@ func generateOrgConfigGroup(org *Organization, mspConfig *mb.MSPConfig) (*cb.Con
 	}
 
 	if err = addPolicies(orgGroup, org.Policies, AdminsPolicyKey); err != nil {
-		return nil, fmt.Errorf("failed to add policies: %v", err)
+		return nil, err
 	}
 
 	err = addValue(orgGroup, mspValue(mspConfig), AdminsPolicyKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to add msp value: %v", err)
+		return nil, err
 	}
 
 	if len(org.OrdererEndpoints) > 0 {
 		err = addValue(orgGroup, endpointsValue(org.OrdererEndpoints), AdminsPolicyKey)
 		if err != nil {
-			return nil, fmt.Errorf("failed to add orderer endpoints value: %v", err)
+			return nil, err
 		}
 	}
 
@@ -594,20 +604,11 @@ func generateOrgConfigGroup(org *Organization, mspConfig *mb.MSPConfig) (*cb.Con
 }
 
 // CreateSignedConfigUpdateEnvelope creates a signed configuration update envelope.
-func CreateSignedConfigUpdateEnvelope(configUpdate *cb.ConfigUpdate, signingIdentity *SigningIdentity, signatures ...*cb.ConfigSignature) (*cb.Envelope, error) {
-	if configUpdate == nil {
-		return nil, errors.New("no config update specified")
-	}
-	if signingIdentity == nil {
-		return nil, errors.New("no signing identity specified")
-	}
-	if len(signatures) == 0 {
-		return nil, errors.New("no signatures specified")
-	}
-
+func CreateSignedConfigUpdateEnvelope(configUpdate *cb.ConfigUpdate, signingIdentity *SigningIdentity,
+	signatures ...*cb.ConfigSignature) (*cb.Envelope, error) {
 	update, err := proto.Marshal(configUpdate)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal config update")
+		return nil, fmt.Errorf("failed to marshal config update: %v", err)
 	}
 
 	configUpdateEnvelope := &cb.ConfigUpdateEnvelope{
@@ -615,9 +616,10 @@ func CreateSignedConfigUpdateEnvelope(configUpdate *cb.ConfigUpdate, signingIden
 		Signatures:   signatures,
 	}
 
-	signedEnvelope, err := createSignedEnvelopeWithTLSBinding(cb.HeaderType_CONFIG_UPDATE, configUpdate.ChannelId, signingIdentity, configUpdateEnvelope)
+	signedEnvelope, err := createSignedEnvelopeWithTLSBinding(cb.HeaderType_CONFIG_UPDATE, configUpdate.ChannelId,
+		signingIdentity, configUpdateEnvelope)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create signed config update envelope: %s", err)
+		return nil, fmt.Errorf("failed to create signed config update envelope: %v", err)
 	}
 
 	return signedEnvelope, nil
@@ -629,7 +631,7 @@ func CreateSignedConfigUpdateEnvelope(configUpdate *cb.ConfigUpdate, signingIden
 func createSignedEnvelopeWithTLSBinding(
 	txType cb.HeaderType,
 	channelID string,
-	signer *SigningIdentity,
+	signingIdentity *SigningIdentity,
 	envelope proto.Message,
 ) (*cb.Envelope, error) {
 	channelHeader := &cb.ChannelHeader{
@@ -641,22 +643,24 @@ func createSignedEnvelopeWithTLSBinding(
 		ChannelId: channelID,
 	}
 
-	signatureHeader, err := signer.CreateSignatureHeader()
+	signatureHeader, err := signatureHeader(signingIdentity)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create signature header: %v", err)
+		return nil, fmt.Errorf("creating signature header: %v", err)
 	}
 
 	cHeader, err := proto.Marshal(channelHeader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal channel header: %s", err)
+		return nil, fmt.Errorf("marshalling channel header: %s", err)
 	}
+
 	sHeader, err := proto.Marshal(signatureHeader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal signature header: %s", err)
+		return nil, fmt.Errorf("marshalling signature header: %s", err)
 	}
+
 	data, err := proto.Marshal(envelope)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal config update envelope: %s", err)
+		return nil, fmt.Errorf("marshalling config update envelope: %s", err)
 	}
 
 	payload := &cb.Payload{
@@ -666,14 +670,15 @@ func createSignedEnvelopeWithTLSBinding(
 		},
 		Data: data,
 	}
+
 	payloadBytes, err := proto.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %s", err)
+		return nil, fmt.Errorf("marshalling payload: %s", err)
 	}
 
-	sig, err := signer.Sign(rand.Reader, payloadBytes)
+	sig, err := signingIdentity.Sign(rand.Reader, payloadBytes, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign envelope's payload: %v", err)
+		return nil, fmt.Errorf("signing envelope's payload: %v", err)
 	}
 
 	env := &cb.Envelope{
@@ -682,4 +687,44 @@ func createSignedEnvelopeWithTLSBinding(
 	}
 
 	return env, nil
+}
+
+// AddOrgToConsortium adds an org definition to a named consortium in a given
+// channel configuration.
+func AddOrgToConsortium(org *Organization, consortium, channelID string, config *cb.Config, mspConfig *mb.MSPConfig) (*cb.ConfigUpdate, error) {
+	if org == nil {
+		return nil, errors.New("organization is empty")
+	}
+	if consortium == "" {
+		return nil, errors.New("consortium is empty")
+	}
+
+	updatedConfig := proto.Clone(config).(*cb.Config)
+
+	consortiumsGroup, ok := updatedConfig.ChannelGroup.Groups[ConsortiumsGroupKey]
+	if !ok {
+		return nil, errors.New("consortiums group does not exist")
+	}
+
+	consortiumGroup, ok := consortiumsGroup.Groups[consortium]
+	if !ok {
+		return nil, fmt.Errorf("consortium '%s' does not exist", consortium)
+	}
+
+	orgGroup, err := newConsortiumOrgGroup(org, mspConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create consortium org: %v", err)
+	}
+
+	if consortiumGroup.Groups == nil {
+		consortiumGroup.Groups = map[string]*cb.ConfigGroup{}
+	}
+	consortiumGroup.Groups[org.Name] = orgGroup
+
+	configUpdate, err := ComputeUpdate(config, updatedConfig, channelID)
+	if err != nil {
+		return nil, err
+	}
+
+	return configUpdate, nil
 }

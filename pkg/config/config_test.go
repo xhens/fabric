@@ -21,17 +21,21 @@ import (
 
 func TestSignConfigUpdate(t *testing.T) {
 	t.Parallel()
-	publicKey, privateKey := generatePublicAndPrivateKey()
-
 	gt := NewGomegaWithT(t)
 
-	signingIdentity, err := NewSigningIdentity(publicKey, privateKey, "test-msp")
-	gt.Expect(err).NotTo(HaveOccurred())
+	cert, privateKey := generateCertAndPrivateKey()
+	signingIdentity := &SigningIdentity{
+		Certificate: cert,
+		PrivateKey:  privateKey,
+		MSPID:       "test-msp",
+	}
+
 	configSignature, err := SignConfigUpdate(&common.ConfigUpdate{}, signingIdentity)
 	gt.Expect(err).NotTo(HaveOccurred())
 
-	expectedCreator, err := signingIdentity.Serialize()
+	sh, err := signatureHeader(signingIdentity)
 	gt.Expect(err).NotTo(HaveOccurred())
+	expectedCreator := sh.Creator
 	signatureHeader := &common.SignatureHeader{}
 	err = proto.Unmarshal(configSignature.SignatureHeader, signatureHeader)
 	gt.Expect(err).NotTo(HaveOccurred())
@@ -189,17 +193,17 @@ func TestNewCreateChannelTx(t *testing.T) {
 
 	tests := []struct {
 		testName   string
-		profileMod func() *Profile
+		profileMod func() *Channel
 	}{
 		{
 			testName: "When creating new create channel Tx with ImplicitMetaPolicyType",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				return baseProfile()
 			},
 		},
 		{
 			testName: "When creating new create channel Tx with ImplicitMetaPolicyType_ALL",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Policies[ReadersPolicyKey].Rule = "ALL Readers"
 				return profile
@@ -207,7 +211,7 @@ func TestNewCreateChannelTx(t *testing.T) {
 		},
 		{
 			testName: "When creating new create channel Tx with SignatureTypePolicy",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Policies[ReadersPolicyKey].Type = SignaturePolicyType
 				profile.Policies[ReadersPolicyKey].Rule = "OutOf(1, 'A.member', 'B.member')"
@@ -216,12 +220,12 @@ func TestNewCreateChannelTx(t *testing.T) {
 		},
 		{
 			testName: "When creating new create channel Tx with orderer defined in profile",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Orderer = &Orderer{
 					OrdererType: ConsensusTypeSolo,
 					Addresses:   []string{"1", "2"},
-					Policies:    createStandardPolicies(),
+					Policies:    standardPolicies(),
 				}
 				profile.Orderer.Policies[BlockValidationPolicyKey] = &Policy{
 					Type: ImplicitMetaPolicyType,
@@ -313,149 +317,161 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 
 	tests := []struct {
 		testName   string
-		profileMod func() *Profile
+		profileMod func() *Channel
 		err        error
 	}{
 		{
 			testName: "When creating the default config template with no policies defined fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Policies = nil
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to add policies: no policies defined"),
+			err: errors.New("creating default config template: failed to add policies to " +
+				"channel group: no policies defined"),
 		},
 		{
 			testName: "When creating the default config template with no ApplicationGroupKey defined fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Application = nil
 				return profile
 			},
-			err: errors.New("failed to create default config template: channel template config must contain " +
+			err: errors.New("creating default config template: channel template config must contain " +
 				"an application section"),
 		},
 		{
 			testName: "When creating the default config template with no Admins policies defined fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				delete(profile.Policies, AdminsPolicyKey)
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to add policies: no Admins policy defined"),
+			err: errors.New("creating default config template: failed to add policies to channel group: " +
+				"no Admins policy defined"),
 		},
 		{
 			testName: "When creating the default config template with no Readers policies defined fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				delete(profile.Policies, ReadersPolicyKey)
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to add policies: no Readers policy defined"),
+			err: errors.New("creating default config template: failed to add policies to channel group: " +
+				"no Readers policy defined"),
 		},
 		{
 			testName: "When creating the default config template with no Writers policies defined fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				delete(profile.Policies, WritersPolicyKey)
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to add policies: no Writers policy defined"),
+			err: errors.New("creating default config template: failed to add policies to channel group: " +
+				"no Writers policy defined"),
 		},
 		{
 			testName: "When creating the default config template with an invalid ImplicitMetaPolicy rule fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Policies[ReadersPolicyKey].Rule = "ALL"
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to add policies: invalid implicit meta policy rule: 'ALL' error: expected two space separated " +
+			err: errors.New("creating default config template: failed to add policies to channel group: " +
+				"invalid implicit meta policy rule: 'ALL': expected two space separated " +
 				"tokens, but got 1"),
 		},
 		{
 			testName: "When creating the default config template with an invalid ImplicitMetaPolicy rule fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Policies[ReadersPolicyKey].Rule = "ANYY Readers"
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to add policies: invalid implicit meta policy rule: 'ANYY Readers' error: unknown rule type " +
+			err: errors.New("creating default config template: failed to add policies to channel group: " +
+				"invalid implicit meta policy rule: 'ANYY Readers': unknown rule type " +
 				"'ANYY', expected ALL, ANY, or MAJORITY"),
 		},
 		{
 			testName: "When creating the default config template with SignatureTypePolicy and bad rule fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Policies[ReadersPolicyKey].Type = SignaturePolicyType
 				profile.Policies[ReadersPolicyKey].Rule = "ANYY Readers"
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to add policies: invalid signature policy rule: 'ANYY Readers' error: Cannot transition " +
+			err: errors.New("creating default config template: failed to add policies to channel group: " +
+				"invalid signature policy rule: 'ANYY Readers': Cannot transition " +
 				"token types from VARIABLE [ANYY] to VARIABLE [Readers]"),
 		},
 		{
 			testName: "When creating the default config template with an unknown policy type fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Policies[ReadersPolicyKey].Type = "GreenPolicy"
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to add policies: unknown policy type: GreenPolicy"),
+			err: errors.New("creating default config template: failed to add policies to channel group: " +
+				"unknown policy type: GreenPolicy"),
 		},
 		{
 			testName: "When channel is not specified in config",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				return nil
 			},
-			err: errors.New("profile is empty"),
+			err: errors.New("channel config is required"),
 		},
 		{
 			testName: "When channel ID is not specified in config",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.ChannelID = ""
 				return profile
 			},
-			err: errors.New("channel ID is empty"),
+			err: errors.New("profile's channel ID is required"),
 		},
 		{
 			testName: "When no BlockValidation policy is defined",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Orderer = &Orderer{
 					OrdererType: ConsensusTypeSolo,
-					Policies:    createStandardPolicies(),
+					Policies:    standardPolicies(),
 				}
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to create orderer group: failed to add policies: no BlockValidation policy defined"),
+			err: errors.New("creating default config template: " +
+				"failed to create orderer group: no BlockValidation policy defined"),
 		},
 		{
 			testName: "When creating the consortiums group fails",
-			profileMod: func() *Profile {
+			profileMod: func() *Channel {
 				profile := baseProfile()
 				profile.Consortium = ConsortiumsGroupKey
-				profile.Consortiums = map[string]*Consortium{
-					"Consortiums": {
+				profile.Consortiums = []*Consortium{
+					{
+						Name: "Consortiums",
 						Organizations: []*Organization{
-							{Name: "Org1"}, {Name: "Org2"},
+							{Name: "Org1"},
+							{Name: "Org2"},
 						},
 					},
 				}
 				return profile
 			},
-			err: errors.New("failed to create default config template: failed to create new channel group: " +
-				"failed to create consortiums group: failed to create consortium group: failed to create consortium " +
-				"org group Org1: failed to add policies: no policies defined"),
+			err: errors.New("creating default config template: " +
+				"failed to create consortiums group: " +
+				"org group 'Org1': no policies defined"),
+		},
+		{
+			testName: "When creating the application group fails",
+			profileMod: func() *Channel {
+				profile := baseProfile()
+				profile.Application.Policies = nil
+				return profile
+			},
+			err: errors.New("creating default config template: " +
+				"failed to create application group: no policies defined"),
 		},
 	}
 
@@ -480,14 +496,18 @@ func TestCreateSignedConfigUpdateEnvelope(t *testing.T) {
 	t.Parallel()
 	gt := NewGomegaWithT(t)
 
-	publicKey, privateKey := generatePublicAndPrivateKey()
+	// create signingIdentity
+	cert, privateKey := generateCertAndPrivateKey()
+	signingIdentity := &SigningIdentity{
+		Certificate: cert,
+		PrivateKey:  privateKey,
+		MSPID:       "test-msp",
+	}
+
+	// create detached config signature
 	configUpdate := &common.ConfigUpdate{
 		ChannelId: "testchannel",
 	}
-	// create signingIdentity
-	signingIdentity, err := NewSigningIdentity(publicKey, privateKey, "test-msp")
-	gt.Expect(err).NotTo(HaveOccurred())
-	// create detached config signature
 	configSignature, err := SignConfigUpdate(configUpdate, signingIdentity)
 	gt.Expect(err).NotTo(HaveOccurred())
 
@@ -513,19 +533,25 @@ func TestCreateSignedConfigUpdateEnvelope(t *testing.T) {
 	gt.Expect(expectedSignatures.Signature).To(Equal(configSignature.Signature))
 }
 
-func TestCreateSignedConfigupdateEnvelopeFailures(t *testing.T) {
+func TestCreateSignedConfigUpdateEnvelopeFailures(t *testing.T) {
 	t.Parallel()
 	gt := NewGomegaWithT(t)
-	publicKey, privateKey := generatePublicAndPrivateKey()
+
+	// create signingIdentity
+	cert, privateKey := generateCertAndPrivateKey()
+	signingIdentity := &SigningIdentity{
+		Certificate: cert,
+		PrivateKey:  privateKey,
+		MSPID:       "test-msp",
+	}
+
+	// create detached config signature
 	configUpdate := &common.ConfigUpdate{
 		ChannelId: "testchannel",
 	}
-	// create signingIdentity
-	signingIdentity, err := NewSigningIdentity(publicKey, privateKey, "test-msp")
-	gt.Expect(err).NotTo(HaveOccurred())
-	// create detached config signature
 	configSignature, err := SignConfigUpdate(configUpdate, signingIdentity)
 	gt.Expect(err).NotTo(HaveOccurred())
+
 	tests := []struct {
 		spec            string
 		configUpdate    *common.ConfigUpdate
@@ -534,27 +560,14 @@ func TestCreateSignedConfigupdateEnvelopeFailures(t *testing.T) {
 		expectedErr     string
 	}{
 		{
-			spec:            "when the signing identity is not specified",
-			configUpdate:    configUpdate,
-			signingIdentity: nil,
-			configSignature: []*common.ConfigSignature{configSignature},
-			expectedErr:     "no signing identity specified",
-		},
-		{
-			spec:            "when no signatures are provided",
-			configUpdate:    configUpdate,
-			signingIdentity: signingIdentity,
-			configSignature: nil,
-			expectedErr:     "no signatures specified",
-		},
-		{
 			spec:            "when no signatures are provided",
 			configUpdate:    nil,
 			signingIdentity: signingIdentity,
 			configSignature: []*common.ConfigSignature{configSignature},
-			expectedErr:     "no config update specified",
+			expectedErr:     "failed to marshal config update: proto: Marshal called with nil",
 		},
 	}
+
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.spec, func(t *testing.T) {
@@ -569,22 +582,245 @@ func TestCreateSignedConfigupdateEnvelopeFailures(t *testing.T) {
 	}
 }
 
-func baseProfile() *Profile {
-	return &Profile{
+func TestAddOrgToConsortium(t *testing.T) {
+	gt := NewGomegaWithT(t)
+
+	config := &cb.Config{
+		ChannelGroup: &cb.ConfigGroup{
+			Groups: map[string]*cb.ConfigGroup{
+				"Consortiums": {
+					Groups: map[string]*cb.ConfigGroup{
+						"test-consortium": {},
+					},
+				},
+			},
+		},
+	}
+
+	org := &Organization{
+		Name:     "Org1",
+		ID:       "Org1MSP",
+		Policies: applicationOrgStandardPolicies(),
+	}
+
+	configUpdate, err := AddOrgToConsortium(org, "test-consortium", "testchannel", config, &mb.MSPConfig{})
+	gt.Expect(err).NotTo(HaveOccurred())
+
+	expectedConfigUpdate := &cb.ConfigUpdate{
+		ChannelId: "testchannel",
+		ReadSet: &cb.ConfigGroup{
+			Groups: map[string]*cb.ConfigGroup{
+				"Consortiums": {
+					Groups: map[string]*cb.ConfigGroup{
+						"test-consortium": {},
+					},
+				},
+			},
+		},
+		WriteSet: &cb.ConfigGroup{
+			Groups: map[string]*cb.ConfigGroup{
+				"Consortiums": {
+					Groups: map[string]*cb.ConfigGroup{
+						"test-consortium": {
+							Version: 1,
+							Groups: map[string]*cb.ConfigGroup{
+								"Org1": {
+									Values: map[string]*cb.ConfigValue{
+										"MSP": {
+											ModPolicy: "Admins",
+											Value:     marshalOrPanic(&mb.MSPConfig{}),
+										},
+									},
+									Policies: map[string]*cb.ConfigPolicy{
+										"Admins": {
+											ModPolicy: "Admins",
+											Policy: &cb.Policy{
+												Type: 3,
+												Value: marshalOrPanic(&cb.ImplicitMetaPolicy{
+													Rule:      cb.ImplicitMetaPolicy_Rule(cb.ImplicitMetaPolicy_MAJORITY),
+													SubPolicy: "Admins",
+												}),
+											},
+										},
+										"Endorsement": {
+											ModPolicy: "Admins",
+											Policy: &cb.Policy{
+												Type: 3,
+												Value: marshalOrPanic(&cb.ImplicitMetaPolicy{
+													Rule:      cb.ImplicitMetaPolicy_Rule(cb.ImplicitMetaPolicy_MAJORITY),
+													SubPolicy: "Endorsement",
+												}),
+											},
+										},
+										"LifecycleEndorsement": {
+											ModPolicy: "Admins",
+											Policy: &cb.Policy{
+												Type: 3,
+												Value: marshalOrPanic(&cb.ImplicitMetaPolicy{
+													Rule:      cb.ImplicitMetaPolicy_Rule(cb.ImplicitMetaPolicy_MAJORITY),
+													SubPolicy: "Endorsement",
+												}),
+											},
+										},
+										"Readers": {
+											ModPolicy: "Admins",
+											Policy: &cb.Policy{
+												Type: 3,
+												Value: marshalOrPanic(&cb.ImplicitMetaPolicy{
+													Rule:      cb.ImplicitMetaPolicy_Rule(cb.ImplicitMetaPolicy_ANY),
+													SubPolicy: "Readers",
+												}),
+											},
+										},
+										"Writers": {
+											ModPolicy: "Admins",
+											Policy: &cb.Policy{
+												Type: 3,
+												Value: marshalOrPanic(&cb.ImplicitMetaPolicy{
+													Rule:      cb.ImplicitMetaPolicy_Rule(cb.ImplicitMetaPolicy_ANY),
+													SubPolicy: "Writers",
+												}),
+											},
+										},
+									},
+									ModPolicy: "Admins",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	gt.Expect(proto.Equal(configUpdate, expectedConfigUpdate)).To(BeTrue())
+}
+
+// marshalOrPanic serializes a protobuf message and panics if this
+// operation fails.
+func marshalOrPanic(pb proto.Message) []byte {
+	data, err := proto.Marshal(pb)
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
+func TestAddOrgToConsortiumFailures(t *testing.T) {
+	t.Parallel()
+
+	baseConfig := &cb.Config{
+		ChannelGroup: &cb.ConfigGroup{
+			Groups: map[string]*cb.ConfigGroup{
+				"Consortiums": {
+					Groups: map[string]*cb.ConfigGroup{
+						"test-consortium": {},
+					},
+				},
+			},
+		},
+	}
+
+	org := &Organization{
+		Name:     "test-org",
+		ID:       "test-org-msp-id",
+		Policies: applicationOrgStandardPolicies(),
+	}
+
+	for _, test := range []struct {
+		name        string
+		org         *Organization
+		consortium  string
+		channelID   string
+		config      *cb.Config
+		expectedErr string
+	}{
+		{
+			name:        "When the organization is nil",
+			org:         nil,
+			consortium:  "test-consortium",
+			channelID:   "test-channel",
+			config:      baseConfig,
+			expectedErr: "organization is empty",
+		},
+		{
+			name:        "When the consortium name is not specified",
+			org:         org,
+			consortium:  "",
+			channelID:   "test-channel",
+			config:      baseConfig,
+			expectedErr: "consortium is empty",
+		},
+		{
+			name:       "When the config doesn't contain a consortiums group",
+			org:        org,
+			consortium: "test-consortium",
+			channelID:  "test-channel",
+			config: &cb.Config{
+				ChannelGroup: &cb.ConfigGroup{
+					Groups: map[string]*cb.ConfigGroup{},
+				},
+			},
+			expectedErr: "consortiums group does not exist",
+		},
+		{
+			name:        "When the config doesn't contain the consortium",
+			org:         org,
+			consortium:  "what-the-what",
+			channelID:   "test-channel",
+			config:      baseConfig,
+			expectedErr: "consortium 'what-the-what' does not exist",
+		},
+		{
+			name: "When the config doesn't contain the consortium",
+			org: &Organization{
+				Name: "test-msp",
+				ID:   "test-org-msp-id",
+				Policies: map[string]*Policy{
+					"Admins": nil,
+				},
+			},
+			consortium:  "test-consortium",
+			channelID:   "test-channel",
+			config:      baseConfig,
+			expectedErr: "failed to create consortium org: no Admins policy defined",
+		},
+		{
+			name:        "When the channel ID is not specified",
+			org:         org,
+			consortium:  "test-consortium",
+			channelID:   "",
+			config:      baseConfig,
+			expectedErr: "channel ID is required",
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			gt := NewGomegaWithT(t)
+
+			configUpdate, err := AddOrgToConsortium(test.org, test.consortium, test.channelID, test.config, &mb.MSPConfig{})
+			gt.Expect(configUpdate).To(BeNil())
+			gt.Expect(err).To(MatchError(test.expectedErr))
+		})
+	}
+}
+
+func baseProfile() *Channel {
+	return &Channel{
 		ChannelID:  "testchannel",
 		Consortium: "SampleConsortium",
 		Application: &Application{
-			Policies: createStandardPolicies(),
+			Policies: standardPolicies(),
 			Organizations: []*Organization{
 				{
 					Name:     "Org1",
 					ID:       "Org1MSP",
-					Policies: createApplicationOrgStandardPolicies(),
+					Policies: applicationOrgStandardPolicies(),
 				},
 				{
 					Name:     "Org2",
 					ID:       "Org2MSP",
-					Policies: createApplicationOrgStandardPolicies(),
+					Policies: applicationOrgStandardPolicies(),
 				},
 			},
 			Capabilities: map[string]bool{
@@ -592,11 +828,11 @@ func baseProfile() *Profile {
 			},
 		},
 		Capabilities: map[string]bool{"V2_0": true},
-		Policies:     createStandardPolicies(),
+		Policies:     standardPolicies(),
 	}
 }
 
-func createStandardPolicies() map[string]*Policy {
+func standardPolicies() map[string]*Policy {
 	return map[string]*Policy{
 		ReadersPolicyKey: {
 			Type: ImplicitMetaPolicyType,
@@ -613,8 +849,8 @@ func createStandardPolicies() map[string]*Policy {
 	}
 }
 
-func createOrgStandardPolicies() map[string]*Policy {
-	policies := createStandardPolicies()
+func orgStandardPolicies() map[string]*Policy {
+	policies := standardPolicies()
 
 	policies[EndorsementPolicyKey] = &Policy{
 		Type: ImplicitMetaPolicyType,
@@ -624,8 +860,8 @@ func createOrgStandardPolicies() map[string]*Policy {
 	return policies
 }
 
-func createApplicationOrgStandardPolicies() map[string]*Policy {
-	policies := createOrgStandardPolicies()
+func applicationOrgStandardPolicies() map[string]*Policy {
+	policies := orgStandardPolicies()
 
 	policies[LifecycleEndorsementPolicyKey] = &Policy{
 		Type: ImplicitMetaPolicyType,
@@ -635,8 +871,8 @@ func createApplicationOrgStandardPolicies() map[string]*Policy {
 	return policies
 }
 
-func createOrdererStandardPolicies() map[string]*Policy {
-	policies := createStandardPolicies()
+func ordererStandardPolicies() map[string]*Policy {
+	policies := standardPolicies()
 
 	policies[BlockValidationPolicyKey] = &Policy{
 		Type: ImplicitMetaPolicyType,
@@ -646,7 +882,7 @@ func createOrdererStandardPolicies() map[string]*Policy {
 	return policies
 }
 
-func TestGenerateOrgConfigGroup(t *testing.T) {
+func TestNewOrgConfigGroup(t *testing.T) {
 	t.Parallel()
 
 	t.Run("success", func(t *testing.T) {
@@ -734,14 +970,14 @@ func TestGenerateOrgConfigGroup(t *testing.T) {
 
 		org := baseProfile().Application.Organizations[0]
 		org.OrdererEndpoints = []string{"123.45.677:8080"}
-		configGroup, err := generateOrgConfigGroup(org, mspConfig)
+		configGroup, err := newOrgConfigGroup(org, mspConfig)
 		gt.Expect(err).NotTo(HaveOccurred())
 
 		buf := bytes.Buffer{}
 		err = protolator.DeepMarshalJSON(&buf, configGroup)
 		gt.Expect(err).NotTo(HaveOccurred())
 
-		gt.Expect(buf.String()).To(Equal(expectedPrintOrg))
+		gt.Expect(buf.String()).To(MatchJSON(expectedPrintOrg))
 	})
 
 	t.Run("skip as foreign", func(t *testing.T) {
@@ -758,7 +994,7 @@ func TestGenerateOrgConfigGroup(t *testing.T) {
 
 		org := baseProfile().Application.Organizations[0]
 		org.SkipAsForeign = true
-		configGroup, err := generateOrgConfigGroup(org, mspConfig)
+		configGroup, err := newOrgConfigGroup(org, mspConfig)
 		gt.Expect(err).NotTo(HaveOccurred())
 
 		buf := bytes.Buffer{}
@@ -769,7 +1005,7 @@ func TestGenerateOrgConfigGroup(t *testing.T) {
 	})
 }
 
-func TestGenerateOrgConfigGroupFailure(t *testing.T) {
+func TestNewOrgConfigGroupFailure(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -784,14 +1020,14 @@ func TestGenerateOrgConfigGroupFailure(t *testing.T) {
 				o.Policies = nil
 			},
 			&mb.MSPConfig{},
-			"failed to add policies: no policies defined",
+			"no policies defined",
 		},
 		{
 			"When failing to add msp value",
 			func(o *Organization) {
 			},
 			nil,
-			"failed to add msp value: failed to marshal standard config value: proto: Marshal called with nil",
+			"marshalling standard config value 'MSP': proto: Marshal called with nil",
 		},
 	}
 
@@ -803,7 +1039,7 @@ func TestGenerateOrgConfigGroupFailure(t *testing.T) {
 			gt := NewGomegaWithT(t)
 			baseOrg := baseProfile().Application.Organizations[0]
 			tt.organizationMod(baseOrg)
-			configGroup, err := generateOrgConfigGroup(baseOrg, tt.mspConfig)
+			configGroup, err := newOrgConfigGroup(baseOrg, tt.mspConfig)
 			gt.Expect(err).To(MatchError(tt.expectedErr))
 			gt.Expect(configGroup).To(BeNil())
 		})
@@ -880,7 +1116,7 @@ func TestComputeUpdateFailures(t *testing.T) {
 		{
 			name:        "When channel ID is not specified",
 			channelID:   "",
-			expectedErr: "channel ID is empty",
+			expectedErr: "channel ID is required",
 		},
 		{
 			name:        "When failing to compute update",

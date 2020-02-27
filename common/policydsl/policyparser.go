@@ -1,10 +1,10 @@
 /*
-Copyright IBM Corp. All Rights Reserved.
+Copyright IBM Corp. 2017 All Rights Reserved.
 
 SPDX-License-Identifier: Apache-2.0
 */
 
-package config
+package policydsl
 
 import (
 	"fmt"
@@ -43,12 +43,13 @@ var (
 	regexErr = regexp.MustCompile("^No parameter '([^']+)' found[.]$")
 )
 
-// outof is a stub function - it returns the same string as it's passed
+// a stub function - it returns the same string as it's passed.
 // This will be evaluated by second/third passes to convert to a proto policy
 func outof(args ...interface{}) (interface{}, error) {
 	toret := "outof("
+
 	if len(args) < 2 {
-		return nil, fmt.Errorf("expected at least two arguments to NOutOf, but got %d", len(args))
+		return nil, fmt.Errorf("expected at least two arguments to NOutOf. Given %d", len(args))
 	}
 
 	arg0 := args[0]
@@ -65,6 +66,7 @@ func outof(args ...interface{}) (interface{}, error) {
 
 	for _, arg := range args[1:] {
 		toret += ", "
+
 		switch t := arg.(type) {
 		case string:
 			if regex.MatchString(t) {
@@ -76,6 +78,7 @@ func outof(args ...interface{}) (interface{}, error) {
 			return nil, fmt.Errorf("unexpected type %s", reflect.TypeOf(arg))
 		}
 	}
+
 	return toret + ")", nil
 }
 
@@ -93,6 +96,7 @@ func firstPass(args ...interface{}) (interface{}, error) {
 	toret := "outof(ID"
 	for _, arg := range args {
 		toret += ", "
+
 		switch t := arg.(type) {
 		case string:
 			if regex.MatchString(t) {
@@ -112,55 +116,56 @@ func firstPass(args ...interface{}) (interface{}, error) {
 }
 
 func secondPass(args ...interface{}) (interface{}, error) {
-	// general sanity check, we expect at least 3 args
+	/* general sanity check, we expect at least 3 args */
 	if len(args) < 3 {
-		return nil, fmt.Errorf("at least 3 arguments expected, but got %d", len(args))
+		return nil, fmt.Errorf("at least 3 arguments expected, got %d", len(args))
 	}
 
-	// get the first argument, we expect it to be the context
+	/* get the first argument, we expect it to be the context */
 	var ctx *context
 	switch v := args[0].(type) {
 	case *context:
 		ctx = v
 	default:
-		return nil, fmt.Errorf("unrecognized type, expected the context, but got %s", reflect.TypeOf(args[0]))
+		return nil, fmt.Errorf("unrecognized type, expected the context, got %s", reflect.TypeOf(args[0]))
 	}
 
-	// get the second argument, we expect an integer telling us
-	// how many of the remaining we expect to have
+	/* get the second argument, we expect an integer telling us
+	   how many of the remaining we expect to have*/
 	var t int
 	switch arg := args[1].(type) {
 	case float64:
 		t = int(arg)
 	default:
-		return nil, fmt.Errorf("unrecognized type, expected a number, but got %s", reflect.TypeOf(args[1]))
+		return nil, fmt.Errorf("unrecognized type, expected a number, got %s", reflect.TypeOf(args[1]))
 	}
 
-	// get the n in the t out of n
+	/* get the n in the t out of n */
 	var n int = len(args) - 2
 
-	// sanity check - t should be positive, permit equal to n+1, but disallow over n+1
+	/* sanity check - t should be positive, permit equal to n+1, but disallow over n+1 */
 	if t < 0 || t > n+1 {
 		return nil, fmt.Errorf("invalid t-out-of-n predicate, t %d, n %d", t, n)
 	}
 
 	policies := make([]*cb.SignaturePolicy, 0)
 
-	// handle the rest of the arguments
+	/* handle the rest of the arguments */
 	for _, principal := range args[2:] {
 		switch t := principal.(type) {
-		// if it's a string, we expect it to be formed as
-		//    <MSP_ID> . <ROLE>, where MSP_ID is the MSP identifier
-		//    and ROLE is either a member, an admin, a client, a peer or an orderer
+		/* if it's a string, we expect it to be formed as
+		   <MSP_ID> . <ROLE>, where MSP_ID is the MSP identifier
+		   and ROLE is either a member, an admin, a client, a peer or an orderer*/
 		case string:
-			// split the string
+			/* split the string */
 			subm := regex.FindAllStringSubmatch(t, -1)
 			if subm == nil || len(subm) != 1 || len(subm[0]) != 4 {
 				return nil, fmt.Errorf("error parsing principal %s", t)
 			}
 
-			// get the right role
+			/* get the right role */
 			var r mb.MSPRole_MSPRoleType
+
 			switch subm[0][3] {
 			case RoleMember:
 				r = mb.MSPRole_MEMBER
@@ -176,39 +181,40 @@ func secondPass(args ...interface{}) (interface{}, error) {
 				return nil, fmt.Errorf("error parsing role %s", t)
 			}
 
-			// build the principal we've been told
+			/* build the principal we've been told */
 			mspRole, err := proto.Marshal(&mb.MSPRole{MspIdentifier: subm[0][1], Role: r})
 			if err != nil {
-				return nil, fmt.Errorf("failed to marshal msp role: %v", err)
+				return nil, fmt.Errorf("error marshalling msp role: %s", err)
 			}
 
 			p := &mb.MSPPrincipal{
 				PrincipalClassification: mb.MSPPrincipal_ROLE,
-				Principal:               mspRole}
+				Principal:               mspRole,
+			}
 			ctx.principals = append(ctx.principals, p)
 
-			// create a SignaturePolicy that requires a signature from
-			// the principal we've just built
+			/* create a SignaturePolicy that requires a signature from
+			   the principal we've just built*/
 			dapolicy := SignedBy(int32(ctx.IDNum))
 			policies = append(policies, dapolicy)
 
-			// increment the identity counter. Note that this is
-			//    suboptimal as we are not reusing identities. We
-			//    can deduplicate them easily and make this puppy
-			//    smaller. For now it's fine though
+			/* increment the identity counter. Note that this is
+			   suboptimal as we are not reusing identities. We
+			   can deduplicate them easily and make this puppy
+			   smaller. For now it's fine though */
 			// TODO: deduplicate principals
 			ctx.IDNum++
 
-		// if we've already got a policy we're good, just append it
+		/* if we've already got a policy we're good, just append it */
 		case *cb.SignaturePolicy:
 			policies = append(policies, t)
 
 		default:
-			return nil, fmt.Errorf("unrecognized type, expected a principal or a policy, but got %s", reflect.TypeOf(principal))
+			return nil, fmt.Errorf("unrecognized type, expected a principal or a policy, got %s", reflect.TypeOf(principal))
 		}
 	}
 
-	return nOutOf(int32(t), policies), nil
+	return NOutOf(int32(t), policies), nil
 }
 
 type context struct {
@@ -269,6 +275,7 @@ func FromString(policy string) (*cb.SignaturePolicyEnvelope, error) {
 
 		return nil, err
 	}
+
 	resStr, ok := intermediateRes.(string)
 	if !ok {
 		return nil, fmt.Errorf("invalid policy string '%s'", policy)
@@ -280,7 +287,10 @@ func FromString(policy string) (*cb.SignaturePolicyEnvelope, error) {
 	// to user-implemented functions other than via arguments.
 	// We need this argument because we need a global place where
 	// we put the identities that the policy requires
-	exp, err := govaluate.NewEvaluableExpressionWithFunctions(resStr, map[string]govaluate.ExpressionFunction{"outof": firstPass})
+	exp, err := govaluate.NewEvaluableExpressionWithFunctions(
+		resStr,
+		map[string]govaluate.ExpressionFunction{"outof": firstPass},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -297,6 +307,7 @@ func FromString(policy string) (*cb.SignaturePolicyEnvelope, error) {
 
 		return nil, err
 	}
+
 	resStr, ok = res.(string)
 	if !ok {
 		return nil, fmt.Errorf("invalid policy string '%s'", policy)
@@ -306,7 +317,10 @@ func FromString(policy string) (*cb.SignaturePolicyEnvelope, error) {
 	parameters := make(map[string]interface{}, 1)
 	parameters["ID"] = ctx
 
-	exp, err = govaluate.NewEvaluableExpressionWithFunctions(resStr, map[string]govaluate.ExpressionFunction{"outof": secondPass})
+	exp, err = govaluate.NewEvaluableExpressionWithFunctions(
+		resStr,
+		map[string]govaluate.ExpressionFunction{"outof": secondPass},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -323,6 +337,7 @@ func FromString(policy string) (*cb.SignaturePolicyEnvelope, error) {
 
 		return nil, err
 	}
+
 	rule, ok := res.(*cb.SignaturePolicy)
 	if !ok {
 		return nil, fmt.Errorf("invalid policy string '%s'", policy)
@@ -335,13 +350,4 @@ func FromString(policy string) (*cb.SignaturePolicyEnvelope, error) {
 	}
 
 	return p, nil
-}
-
-// SignedBy creates a SignaturePolicy requiring a given signer's signature
-func SignedBy(index int32) *cb.SignaturePolicy {
-	return &cb.SignaturePolicy{
-		Type: &cb.SignaturePolicy_SignedBy{
-			SignedBy: index,
-		},
-	}
 }
