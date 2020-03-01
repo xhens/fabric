@@ -7,9 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package config
 
 import (
+	"errors"
 	"fmt"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	mb "github.com/hyperledger/fabric-protos-go/msp"
 )
@@ -52,6 +53,34 @@ func NewConsortiumsGroup(consortiums []*Consortium, mspConfig *mb.MSPConfig) (*c
 	return consortiumsGroup, nil
 }
 
+// AddOrgToConsortium adds an org definition to a named consortium in a given
+// channel configuration.
+func AddOrgToConsortium(config *cb.Config, org *Organization, consortium string, mspConfig *mb.MSPConfig) error {
+	var err error
+
+	if org == nil {
+		return errors.New("organization is required")
+	}
+
+	if consortium == "" {
+		return errors.New("consortium is required")
+	}
+
+	consortiumsGroup := config.ChannelGroup.Groups[ConsortiumsGroupKey]
+
+	consortiumGroup, ok := consortiumsGroup.Groups[consortium]
+	if !ok {
+		return fmt.Errorf("consortium '%s' does not exist", consortium)
+	}
+
+	consortiumGroup.Groups[org.Name], err = newOrgConfigGroup(org, mspConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create consortium org: %v", err)
+	}
+
+	return nil
+}
+
 // newConsortiumGroup returns a consortiums component of the channel configuration.
 func newConsortiumGroup(consortium *Consortium, mspConfig *mb.MSPConfig) (*cb.ConfigGroup, error) {
 	var err error
@@ -60,7 +89,7 @@ func newConsortiumGroup(consortium *Consortium, mspConfig *mb.MSPConfig) (*cb.Co
 	consortiumGroup.ModPolicy = ordererAdminsPolicyName
 
 	for _, org := range consortium.Organizations {
-		consortiumGroup.Groups[org.Name], err = newConsortiumOrgGroup(org, mspConfig)
+		consortiumGroup.Groups[org.Name], err = newOrgConfigGroup(org, mspConfig)
 		if err != nil {
 			return nil, fmt.Errorf("org group '%s': %v", org.Name, err)
 		}
@@ -77,31 +106,6 @@ func newConsortiumGroup(consortium *Consortium, mspConfig *mb.MSPConfig) (*cb.Co
 	}
 
 	return consortiumGroup, nil
-}
-
-// newConsortiumOrgGroup returns an org component of the channel configuration.
-// It defines the crypto material for the organization (its MSP).
-// By default, it sets the mod_policy of all elements to "Admins".
-func newConsortiumOrgGroup(org *Organization, mspConfig *mb.MSPConfig) (*cb.ConfigGroup, error) {
-	var err error
-
-	consortiumOrgGroup := newConfigGroup()
-	consortiumOrgGroup.ModPolicy = AdminsPolicyKey
-
-	if org.SkipAsForeign {
-		return consortiumOrgGroup, nil
-	}
-
-	if err = addPolicies(consortiumOrgGroup, org.Policies, AdminsPolicyKey); err != nil {
-		return nil, err
-	}
-
-	err = addValue(consortiumOrgGroup, mspValue(mspConfig), AdminsPolicyKey)
-	if err != nil {
-		return nil, err
-	}
-
-	return consortiumOrgGroup, nil
 }
 
 // consortiumValue returns the config definition for the consortium name
