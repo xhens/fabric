@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/hyperledger/fabric/integration/chaincode/kvexecutor"
 	"github.com/hyperledger/fabric/integration/nwo"
@@ -42,8 +43,10 @@ var _ bool = Describe("Pvtdata dissemination for implicit collection", func() {
 			core.Peer.Gossip.PvtData.ReconciliationEnabled = false
 			if p.Organization == "Org1" {
 				// enable dissemination on org1 peers
-				core.Peer.Gossip.PvtData.ImplicitCollDisseminationPolicy.RequiredPeerCount = 0
+				core.Peer.Gossip.PvtData.ImplicitCollDisseminationPolicy.RequiredPeerCount = 1
 				core.Peer.Gossip.PvtData.ImplicitCollDisseminationPolicy.MaxPeerCount = 3
+				// increase timeout to avoid test flake
+				core.Peer.Gossip.PvtData.PushAckTimeout = 6 * time.Second
 			} else {
 				// disable dessemination on non-org1 peers
 				core.Peer.Gossip.PvtData.ImplicitCollDisseminationPolicy.RequiredPeerCount = 0
