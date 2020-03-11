@@ -12,7 +12,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	cb "github.com/hyperledger/fabric-protos-go/common"
-	mb "github.com/hyperledger/fabric-protos-go/msp"
 	pb "github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/common/tools/protolator"
 	. "github.com/onsi/gomega"
@@ -127,36 +126,13 @@ func TestNewApplicationGroupFailure(t *testing.T) {
 			gt := NewGomegaWithT(t)
 
 			application := baseApplication()
-			tt.applicationMod(application)
+			tt.applicationMod(&application)
 
 			configGrp, err := newApplicationGroup(application)
 			gt.Expect(err).To(MatchError(tt.expectedErr))
 			gt.Expect(configGrp).To(BeNil())
 		})
 	}
-}
-
-func TestNewApplicationGroupSkipAsForeign(t *testing.T) {
-	t.Parallel()
-
-	gt := NewGomegaWithT(t)
-
-	application := baseApplication()
-	application.Organizations[0].SkipAsForeign = true
-	application.Organizations[1].SkipAsForeign = true
-
-	applicationGroup, err := newApplicationGroup(application)
-	gt.Expect(err).NotTo(HaveOccurred())
-	gt.Expect(applicationGroup.Groups["Org1"]).To(Equal(&cb.ConfigGroup{
-		Groups:   make(map[string]*cb.ConfigGroup),
-		Values:   make(map[string]*cb.ConfigValue),
-		Policies: make(map[string]*cb.ConfigPolicy),
-	}))
-	gt.Expect(applicationGroup.Groups["Org2"]).To(Equal(&cb.ConfigGroup{
-		Groups:   make(map[string]*cb.ConfigGroup),
-		Values:   make(map[string]*cb.ConfigValue),
-		Policies: make(map[string]*cb.ConfigPolicy),
-	}))
 }
 
 func TestAddAnchorPeer(t *testing.T) {
@@ -179,12 +155,12 @@ func TestAddAnchorPeer(t *testing.T) {
 		},
 	}
 
-	newOrg1AnchorPeer := &AnchorPeer{
+	newOrg1AnchorPeer := AnchorPeer{
 		Host: "host3",
 		Port: 123,
 	}
 
-	newOrg2AnchorPeer := &AnchorPeer{
+	newOrg2AnchorPeer := AnchorPeer{
 		Host: "host4",
 		Port: 123,
 	}
@@ -327,14 +303,14 @@ func TestAddAnchorPeerFailure(t *testing.T) {
 		testName      string
 		orgName       string
 		configMod     func(*GomegaWithT, *cb.Config)
-		newAnchorPeer *AnchorPeer
+		newAnchorPeer AnchorPeer
 		expectedErr   string
 	}{
 		{
 			testName:      "When the org for the application does not exist",
 			orgName:       "BadOrg",
 			configMod:     nil,
-			newAnchorPeer: &AnchorPeer{Host: "host3", Port: 123},
+			newAnchorPeer: AnchorPeer{Host: "host3", Port: 123},
 			expectedErr:   "application org BadOrg does not exist in channel config",
 		},
 		{
@@ -356,7 +332,7 @@ func TestAddAnchorPeerFailure(t *testing.T) {
 					Value: v,
 				}
 			},
-			newAnchorPeer: &AnchorPeer{Host: "host1", Port: 123},
+			newAnchorPeer: AnchorPeer{Host: "host1", Port: 123},
 			expectedErr:   "application org Org1 already contains anchor peer endpoint host1:123",
 		},
 	}
@@ -507,7 +483,7 @@ func TestRemoveAnchorPeer(t *testing.T) {
 	"sequence": "0"
 }
 	`
-	anchorPeer1 := &AnchorPeer{Host: "host1", Port: 123}
+	anchorPeer1 := AnchorPeer{Host: "host1", Port: 123}
 	err = AddAnchorPeer(config, "Org1", anchorPeer1)
 	gt.Expect(err).NotTo(HaveOccurred())
 	expectedUpdatedConfig := &cb.Config{}
@@ -527,19 +503,19 @@ func TestRemoveAnchorPeerFailure(t *testing.T) {
 	tests := []struct {
 		testName           string
 		orgName            string
-		anchorPeerToRemove *AnchorPeer
+		anchorPeerToRemove AnchorPeer
 		expectedErr        string
 	}{
 		{
 			testName:           "When the org for the application does not exist",
 			orgName:            "BadOrg",
-			anchorPeerToRemove: &AnchorPeer{Host: "host1", Port: 123},
+			anchorPeerToRemove: AnchorPeer{Host: "host1", Port: 123},
 			expectedErr:        "application org BadOrg does not exist in channel config",
 		},
 		{
 			testName:           "When the anchor peer being removed doesn't exist in the org",
 			orgName:            "Org1",
-			anchorPeerToRemove: &AnchorPeer{Host: "host2", Port: 123},
+			anchorPeerToRemove: AnchorPeer{Host: "host2", Port: 123},
 			expectedErr:        "could not find anchor peer host2:123 in Org1's anchor peer endpoints",
 		},
 	}
@@ -572,56 +548,58 @@ func TestRemoveAnchorPeerFailure(t *testing.T) {
 
 func TestGetAnchorPeer(t *testing.T) {
 	t.Parallel()
+
 	gt := NewGomegaWithT(t)
 
 	channelGroup := newConfigGroup()
-	applicationGroup := newConfigGroup()
 
-	application := baseApplication()
-	for _, org := range application.Organizations {
-		orgGroup, err := newOrgConfigGroup(org)
-		gt.Expect(err).NotTo(HaveOccurred())
-		applicationGroup.Groups[org.Name] = orgGroup
-	}
+	applicationGroup, err := newApplicationGroup(baseApplication())
+	gt.Expect(err).NotTo(HaveOccurred())
+
 	channelGroup.Groups[ApplicationGroupKey] = applicationGroup
-	config := &cb.Config{
+	config := cb.Config{
 		ChannelGroup: channelGroup,
 	}
 
-	expectedAnchorPeer := &AnchorPeer{Host: "host1", Port: 123}
+	expectedAnchorPeer := AnchorPeer{Host: "host1", Port: 123}
 
-	anchorPeers, err := GetAnchorPeer(config, "Org1")
+	err = AddAnchorPeer(&config, "Org1", expectedAnchorPeer)
+	gt.Expect(err).NotTo(HaveOccurred())
+
+	anchorPeers, err := GetAnchorPeers(config, "Org1")
 	gt.Expect(err).NotTo(HaveOccurred())
 	gt.Expect(len(anchorPeers)).To(Equal(1))
 	gt.Expect(anchorPeers[0]).To(Equal(expectedAnchorPeer))
-
 }
 
 func TestGetAnchorPeerFailures(t *testing.T) {
 	t.Parallel()
+
 	gt := NewGomegaWithT(t)
 
 	channelGroup := newConfigGroup()
-	applicationGroup := newConfigGroup()
 
-	orgNoAnchor := &Organization{
-		Name:      "Org1",
-		ID:        "Org1MSP",
-		Policies:  applicationOrgStandardPolicies(),
-		MSPConfig: &mb.FabricMSPConfig{},
+	applicationGroup, err := newApplicationGroup(baseApplication())
+	gt.Expect(err).NotTo(HaveOccurred())
+
+	orgNoAnchor := Organization{
+		Name:     "Org1",
+		ID:       "Org1MSP",
+		Policies: applicationOrgStandardPolicies(),
+		MSP:      baseMSP(),
 	}
 	orgGroup, err := newOrgConfigGroup(orgNoAnchor)
 	gt.Expect(err).NotTo(HaveOccurred())
 	applicationGroup.Groups[orgNoAnchor.Name] = orgGroup
 
 	channelGroup.Groups[ApplicationGroupKey] = applicationGroup
-	config := &cb.Config{
+	config := cb.Config{
 		ChannelGroup: channelGroup,
 	}
 
 	for _, test := range []struct {
 		name        string
-		config      *cb.Config
+		config      cb.Config
 		orgName     string
 		expectedErr string
 	}{
@@ -632,43 +610,31 @@ func TestGetAnchorPeerFailures(t *testing.T) {
 			expectedErr: "application org bad-org does not exist in channel config",
 		},
 		{
-			name:        "When org does not have an anchor peer",
+			name:        "When org config group does not have an anchor peers value",
 			config:      config,
 			orgName:     "Org1",
-			expectedErr: "application org Org1 does not have anchor peer",
+			expectedErr: "application org Org1 does not have anchor peers",
 		},
 	} {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			gt := NewGomegaWithT(t)
-			_, err := GetAnchorPeer(test.config, test.orgName)
+			_, err := GetAnchorPeers(test.config, test.orgName)
 			gt.Expect(err).To(MatchError(test.expectedErr))
 		})
 	}
 }
 
-func baseApplication() *Application {
-	return &Application{
+func baseApplication() Application {
+	return Application{
 		Policies: standardPolicies(),
-		Organizations: []*Organization{
+		Organizations: []Organization{
 			{
-				Name:     "Org1",
-				ID:       "Org1MSP",
-				Policies: applicationOrgStandardPolicies(),
-				AnchorPeers: []*AnchorPeer{
-					{Host: "host1", Port: 123},
-				},
-				MSPConfig: &mb.FabricMSPConfig{},
+				Name: "Org1",
 			},
 			{
-				Name:     "Org2",
-				ID:       "Org2MSP",
-				Policies: applicationOrgStandardPolicies(),
-				AnchorPeers: []*AnchorPeer{
-					{Host: "host2", Port: 123},
-				},
-				MSPConfig: &mb.FabricMSPConfig{},
+				Name: "Org2",
 			},
 		},
 		Capabilities: map[string]bool{

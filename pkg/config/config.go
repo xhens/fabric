@@ -27,9 +27,9 @@ import (
 // Channel is a channel configuration.
 type Channel struct {
 	Consortium   string
-	Application  *Application
-	Orderer      *Orderer
-	Consortiums  []*Consortium
+	Application  Application
+	Orderer      Orderer
+	Consortiums  []Consortium
 	Capabilities map[string]bool
 	Policies     map[string]*Policy
 	ChannelID    string
@@ -41,26 +41,15 @@ type Policy struct {
 	Rule string
 }
 
-// Resources is the default policy for the channel.
-type Resources struct {
-	// DefaultModPolicy is the label for the channel's policies.
-	// Options: https://github.com/hyperledger/fabric/blob/04d3bf296a7a387ad09513193e3cafff20b17388/common/policies/policy.go#L36-L6.
-	DefaultModPolicy string
-}
-
 // Organization is an organization in the channel configuration.
 type Organization struct {
-	Name      string
-	ID        string
-	Policies  map[string]*Policy
-	MSPConfig *mb.FabricMSPConfig
+	Name     string
+	ID       string
+	Policies map[string]*Policy
+	MSP      MSP
 
-	AnchorPeers      []*AnchorPeer
+	AnchorPeers      []AnchorPeer
 	OrdererEndpoints []string
-
-	// SkipAsForeign indicates that this org definition is actually unknown to this
-	// instance of the tool, so, parsing of this org's parameters should be ignored
-	SkipAsForeign bool
 }
 
 type standardConfigValue struct {
@@ -75,12 +64,8 @@ type standardConfigPolicy struct {
 
 // NewCreateChannelTx creates a create channel tx using the provided application channel
 // configuration and returns an unsigned envelope for an application channel creation transaction.
-func NewCreateChannelTx(channelConfig *Channel) (*cb.Envelope, error) {
+func NewCreateChannelTx(channelConfig Channel) (*cb.Envelope, error) {
 	var err error
-
-	if channelConfig == nil {
-		return nil, errors.New("channel config is required")
-	}
 
 	channelID := channelConfig.ChannelID
 
@@ -117,7 +102,7 @@ func NewCreateChannelTx(channelConfig *Channel) (*cb.Envelope, error) {
 
 // SignConfigUpdate signs the given configuration update with a
 // specified signing identity and returns a config signature.
-func SignConfigUpdate(configUpdate *cb.ConfigUpdate, signingIdentity *SigningIdentity) (*cb.ConfigSignature, error) {
+func SignConfigUpdate(configUpdate *cb.ConfigUpdate, signingIdentity SigningIdentity) (*cb.ConfigSignature, error) {
 	signatureHeader, err := signatureHeader(signingIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create signature header: %v", err)
@@ -150,7 +135,7 @@ func SignConfigUpdate(configUpdate *cb.ConfigUpdate, signingIdentity *SigningIde
 }
 
 // CreateSignedConfigUpdateEnvelope creates a signed configuration update envelope.
-func CreateSignedConfigUpdateEnvelope(configUpdate *cb.ConfigUpdate, signingIdentity *SigningIdentity,
+func CreateSignedConfigUpdateEnvelope(configUpdate *cb.ConfigUpdate, signingIdentity SigningIdentity,
 	signatures ...*cb.ConfigSignature) (*cb.Envelope, error) {
 	update, err := proto.Marshal(configUpdate)
 	if err != nil {
@@ -171,7 +156,7 @@ func CreateSignedConfigUpdateEnvelope(configUpdate *cb.ConfigUpdate, signingIden
 	return signedEnvelope, nil
 }
 
-func signatureHeader(signingIdentity *SigningIdentity) (*cb.SignatureHeader, error) {
+func signatureHeader(signingIdentity SigningIdentity) (*cb.SignatureHeader, error) {
 	buffer := bytes.NewBuffer(nil)
 
 	err := pem.Encode(buffer, &pem.Block{Type: "CERTIFICATE", Bytes: signingIdentity.Certificate.Raw})
@@ -208,7 +193,7 @@ func newNonce() ([]byte, error) {
 }
 
 // newChannelGroup defines the root of the channel configuration.
-func newChannelGroup(channelConfig *Channel) (*cb.ConfigGroup, error) {
+func newChannelGroup(channelConfig Channel) (*cb.ConfigGroup, error) {
 	var err error
 
 	channelGroup := newConfigGroup()
@@ -220,11 +205,9 @@ func newChannelGroup(channelConfig *Channel) (*cb.ConfigGroup, error) {
 		}
 	}
 
-	if channelConfig.Application != nil {
-		channelGroup.Groups[ApplicationGroupKey], err = newApplicationGroup(channelConfig.Application)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create application group: %v", err)
-		}
+	channelGroup.Groups[ApplicationGroupKey], err = newApplicationGroup(channelConfig.Application)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create application group: %v", err)
 	}
 
 	return channelGroup, nil
@@ -233,19 +216,20 @@ func newChannelGroup(channelConfig *Channel) (*cb.ConfigGroup, error) {
 // newOrgConfigGroup returns an config group for a organization.
 // It defines the crypto material for the organization (its MSP).
 // It sets the mod_policy of all elements to "Admins".
-func newOrgConfigGroup(org *Organization) (*cb.ConfigGroup, error) {
+func newOrgConfigGroup(org Organization) (*cb.ConfigGroup, error) {
 	orgGroup := newConfigGroup()
 	orgGroup.ModPolicy = AdminsPolicyKey
-
-	if org.SkipAsForeign {
-		return orgGroup, nil
-	}
 
 	if err := addPolicies(orgGroup, org.Policies, AdminsPolicyKey); err != nil {
 		return nil, err
 	}
 
-	conf, err := proto.Marshal(org.MSPConfig)
+	fabricMSPConfig, err := org.MSP.toProto()
+	if err != nil {
+		return nil, fmt.Errorf("converting fabric msp config to proto: %v", err)
+	}
+
+	conf, err := proto.Marshal(fabricMSPConfig)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling msp config: %v", err)
 	}
@@ -262,7 +246,7 @@ func newOrgConfigGroup(org *Organization) (*cb.ConfigGroup, error) {
 
 	// OrdererEndpoints are orderer org specific and are only added when specified for orderer orgs
 	if len(org.OrdererEndpoints) > 0 {
-		err = addValue(orgGroup, endpointsValue(org.OrdererEndpoints), AdminsPolicyKey)
+		err := addValue(orgGroup, endpointsValue(org.OrdererEndpoints), AdminsPolicyKey)
 		if err != nil {
 			return nil, err
 		}
@@ -281,7 +265,7 @@ func newOrgConfigGroup(org *Organization) (*cb.ConfigGroup, error) {
 	// This helps prevent a delta from the orderer system channel when computing
 	// more complex channel creation transactions
 	if len(anchorProtos) > 0 {
-		err = addValue(orgGroup, anchorPeersValue(anchorProtos), AdminsPolicyKey)
+		err := addValue(orgGroup, anchorPeersValue(anchorProtos), AdminsPolicyKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to add anchor peers value: %v", err)
 		}
@@ -454,7 +438,7 @@ func mspValue(mspDef *mb.MSPConfig) *standardConfigValue {
 // defaultConfigTemplate generates a config template based on the assumption that
 // the input profile is a channel creation template and no system channel context
 // is available.
-func defaultConfigTemplate(channelConfig *Channel) (*cb.ConfigGroup, error) {
+func defaultConfigTemplate(channelConfig Channel) (*cb.ConfigGroup, error) {
 	channelGroup, err := newChannelGroup(channelConfig)
 	if err != nil {
 		return nil, err
@@ -473,7 +457,7 @@ func defaultConfigTemplate(channelConfig *Channel) (*cb.ConfigGroup, error) {
 // newChannelCreateConfigUpdate generates a ConfigUpdate which can be sent to the orderer to create a new channel.
 // Optionally, the channel group of the ordering system channel may be passed in, and the resulting ConfigUpdate
 // will extract the appropriate versions from this file.
-func newChannelCreateConfigUpdate(channelID string, channelConfig *Channel, templateConfig *cb.ConfigGroup) (*cb.ConfigUpdate, error) {
+func newChannelCreateConfigUpdate(channelID string, channelConfig Channel, templateConfig *cb.ConfigGroup) (*cb.ConfigUpdate, error) {
 	newChannelGroup, err := newChannelGroup(channelConfig)
 	if err != nil {
 		return nil, err
@@ -612,7 +596,7 @@ func concatenateBytes(data ...[]byte) []byte {
 func createSignedEnvelopeWithTLSBinding(
 	txType cb.HeaderType,
 	channelID string,
-	signingIdentity *SigningIdentity,
+	signingIdentity SigningIdentity,
 	envelope proto.Message,
 ) (*cb.Envelope, error) {
 	channelHeader := &cb.ChannelHeader{

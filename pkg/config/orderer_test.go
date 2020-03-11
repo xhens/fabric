@@ -12,7 +12,6 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	cb "github.com/hyperledger/fabric-protos-go/common"
-	mb "github.com/hyperledger/fabric-protos-go/msp"
 	ob "github.com/hyperledger/fabric-protos-go/orderer"
 	eb "github.com/hyperledger/fabric-protos-go/orderer/etcdraft"
 	. "github.com/onsi/gomega"
@@ -23,12 +22,11 @@ func TestNewOrdererGroup(t *testing.T) {
 
 	tests := []struct {
 		ordererType           string
-		configMetadata        *eb.ConfigMetadata
 		numOrdererGroupValues int
 	}{
-		{ordererType: ConsensusTypeSolo, configMetadata: nil, numOrdererGroupValues: 5},
-		{ordererType: ConsensusTypeEtcdRaft, configMetadata: &eb.ConfigMetadata{}, numOrdererGroupValues: 5},
-		{ordererType: ConsensusTypeKafka, configMetadata: nil, numOrdererGroupValues: 6},
+		{ordererType: ConsensusTypeSolo, numOrdererGroupValues: 5},
+		{ordererType: ConsensusTypeEtcdRaft, numOrdererGroupValues: 5},
+		{ordererType: ConsensusTypeKafka, numOrdererGroupValues: 6},
 	}
 
 	for _, tt := range tests {
@@ -40,15 +38,13 @@ func TestNewOrdererGroup(t *testing.T) {
 
 			ordererConf := baseOrderer()
 			ordererConf.OrdererType = tt.ordererType
-			ordererConf.EtcdRaft = tt.configMetadata
 
 			ordererGroup, err := newOrdererGroup(ordererConf)
 			gt.Expect(err).NotTo(HaveOccurred())
 
 			// OrdererGroup checks
-			gt.Expect(len(ordererGroup.Groups)).To(Equal(2))
-			gt.Expect(ordererGroup.Groups["Org1"]).NotTo(BeNil())
-			gt.Expect(ordererGroup.Groups["Org2"]).NotTo(BeNil())
+			gt.Expect(len(ordererGroup.Groups)).To(Equal(1))
+			gt.Expect(ordererGroup.Groups["OrdererOrg"]).NotTo(BeNil())
 			gt.Expect(len(ordererGroup.Values)).To(Equal(tt.numOrdererGroupValues))
 			gt.Expect(ordererGroup.Values[BatchSizeKey]).NotTo(BeNil())
 			gt.Expect(ordererGroup.Values[BatchTimeoutKey]).NotTo(BeNil())
@@ -66,24 +62,15 @@ func TestNewOrdererGroup(t *testing.T) {
 			gt.Expect(ordererGroup.Policies[BlockValidationPolicyKey]).NotTo(BeNil())
 
 			// OrdererOrgGroup checks
-			gt.Expect(len(ordererGroup.Groups["Org1"].Groups)).To(Equal(0))
-			gt.Expect(len(ordererGroup.Groups["Org1"].Values)).To(Equal(2))
-			gt.Expect(ordererGroup.Groups["Org1"].Values[MSPKey]).NotTo(BeNil())
-			gt.Expect(ordererGroup.Groups["Org1"].Values[EndpointsKey]).NotTo(BeNil())
-			gt.Expect(len(ordererGroup.Groups["Org1"].Policies)).To(Equal(4))
-			gt.Expect(ordererGroup.Groups["Org1"].Policies[AdminsPolicyKey]).NotTo(BeNil())
-			gt.Expect(ordererGroup.Groups["Org1"].Policies[ReadersPolicyKey]).NotTo(BeNil())
-			gt.Expect(ordererGroup.Groups["Org1"].Policies[WritersPolicyKey]).NotTo(BeNil())
-			gt.Expect(ordererGroup.Groups["Org1"].Policies[EndorsementPolicyKey]).NotTo(BeNil())
-			gt.Expect(len(ordererGroup.Groups["Org2"].Groups)).To(Equal(0))
-			gt.Expect(len(ordererGroup.Groups["Org2"].Values)).To(Equal(2))
-			gt.Expect(ordererGroup.Groups["Org2"].Values[MSPKey]).NotTo(BeNil())
-			gt.Expect(ordererGroup.Groups["Org2"].Values[EndpointsKey]).NotTo(BeNil())
-			gt.Expect(len(ordererGroup.Groups["Org2"].Policies)).To(Equal(4))
-			gt.Expect(ordererGroup.Groups["Org2"].Policies[AdminsPolicyKey]).NotTo(BeNil())
-			gt.Expect(ordererGroup.Groups["Org2"].Policies[ReadersPolicyKey]).NotTo(BeNil())
-			gt.Expect(ordererGroup.Groups["Org2"].Policies[WritersPolicyKey]).NotTo(BeNil())
-			gt.Expect(ordererGroup.Groups["Org2"].Policies[EndorsementPolicyKey]).NotTo(BeNil())
+			gt.Expect(len(ordererGroup.Groups["OrdererOrg"].Groups)).To(Equal(0))
+			gt.Expect(len(ordererGroup.Groups["OrdererOrg"].Values)).To(Equal(2))
+			gt.Expect(ordererGroup.Groups["OrdererOrg"].Values[MSPKey]).NotTo(BeNil())
+			gt.Expect(ordererGroup.Groups["OrdererOrg"].Values[EndpointsKey]).NotTo(BeNil())
+			gt.Expect(len(ordererGroup.Groups["OrdererOrg"].Policies)).To(Equal(4))
+			gt.Expect(ordererGroup.Groups["OrdererOrg"].Policies[AdminsPolicyKey]).NotTo(BeNil())
+			gt.Expect(ordererGroup.Groups["OrdererOrg"].Policies[ReadersPolicyKey]).NotTo(BeNil())
+			gt.Expect(ordererGroup.Groups["OrdererOrg"].Policies[WritersPolicyKey]).NotTo(BeNil())
+			gt.Expect(ordererGroup.Groups["OrdererOrg"].Policies[EndorsementPolicyKey]).NotTo(BeNil())
 		})
 	}
 }
@@ -107,7 +94,7 @@ func TestNewOrdererGroupFailure(t *testing.T) {
 			testName: "When marshalling etcdraft metadata for orderer group",
 			ordererMod: func(o *Orderer) {
 				o.OrdererType = ConsensusTypeEtcdRaft
-				o.EtcdRaft = &eb.ConfigMetadata{
+				o.EtcdRaft = eb.ConfigMetadata{
 					Consenters: []*eb.Consenter{
 						{
 							Host:          "node-1.example.com",
@@ -142,19 +129,11 @@ func TestNewOrdererGroupFailure(t *testing.T) {
 			err: errors.New("unknown orderer type 'ConsensusTypeGreen'"),
 		},
 		{
-			testName: "When EtcdRaft config is not set for consensus type etcdraft",
-			ordererMod: func(o *Orderer) {
-				o.OrdererType = ConsensusTypeEtcdRaft
-				o.EtcdRaft = nil
-			},
-			err: errors.New("etcdraft metadata for orderer type 'etcdraft' is required"),
-		},
-		{
 			testName: "When adding policies to orderer org group",
 			ordererMod: func(o *Orderer) {
 				o.Organizations[0].Policies = nil
 			},
-			err: errors.New("org group 'Org1': no policies defined"),
+			err: errors.New("org group 'OrdererOrg': no policies defined"),
 		},
 	}
 
@@ -166,7 +145,7 @@ func TestNewOrdererGroupFailure(t *testing.T) {
 			gt := NewGomegaWithT(t)
 
 			ordererConf := baseOrderer()
-			tt.ordererMod(ordererConf)
+			tt.ordererMod(&ordererConf)
 
 			ordererGroup, err := newOrdererGroup(ordererConf)
 			gt.Expect(err).To(MatchError(tt.err))
@@ -225,7 +204,6 @@ func TestUpdateOrdererConfiguration(t *testing.T) {
 	updatedOrdererConf.BatchSize.MaxMessageCount = 10000
 	updatedOrdererConf.Addresses = []string{"newhost:345"}
 	updatedOrdererConf.OrdererType = ConsensusTypeEtcdRaft
-	updatedOrdererConf.EtcdRaft = &eb.ConfigMetadata{}
 
 	err = UpdateOrdererConfiguration(config, updatedOrdererConf)
 	gt.Expect(err).NotTo(HaveOccurred())
@@ -279,28 +257,19 @@ func TestUpdateOrdererConfiguration(t *testing.T) {
 	gt.Expect(config.ChannelGroup.Values[OrdererAddressesKey].Value).To(Equal(expectedOrdererAddresses))
 }
 
-func baseOrderer() *Orderer {
-	return &Orderer{
+func baseOrderer() Orderer {
+	return Orderer{
 		Policies:    ordererStandardPolicies(),
 		OrdererType: ConsensusTypeSolo,
-		Organizations: []*Organization{
+		Organizations: []Organization{
 			{
-				Name:     "Org1",
-				ID:       "Org1MSP",
+				Name:     "OrdererOrg",
+				ID:       "OrdererOrgMSP",
 				Policies: orgStandardPolicies(),
 				OrdererEndpoints: []string{
 					"localhost:123",
 				},
-				MSPConfig: &mb.FabricMSPConfig{},
-			},
-			{
-				Name:     "Org2",
-				ID:       "Org2MSP",
-				Policies: orgStandardPolicies(),
-				OrdererEndpoints: []string{
-					"localhost:123",
-				},
-				MSPConfig: &mb.FabricMSPConfig{},
+				MSP: baseMSP(),
 			},
 		},
 		Capabilities: map[string]bool{
