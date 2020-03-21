@@ -87,7 +87,10 @@ func TestNewApplicationGroupFailure(t *testing.T) {
 		{
 			testName: "When ImplicitMetaPolicy rules' subpolicy is missing",
 			applicationMod: func(application *Application) {
-				application.Policies[ReadersPolicyKey].Rule = "ALL"
+				application.Policies[ReadersPolicyKey] = Policy{
+					Rule: "ALL",
+					Type: ImplicitMetaPolicyType,
+				}
 			},
 			expectedErr: "invalid implicit meta policy rule: 'ALL': expected two space separated " +
 				"tokens, but got 1",
@@ -95,7 +98,10 @@ func TestNewApplicationGroupFailure(t *testing.T) {
 		{
 			testName: "When ImplicitMetaPolicy rule is invalid",
 			applicationMod: func(application *Application) {
-				application.Policies[ReadersPolicyKey].Rule = "ANYY Readers"
+				application.Policies[ReadersPolicyKey] = Policy{
+					Rule: "ANYY Readers",
+					Type: ImplicitMetaPolicyType,
+				}
 			},
 			expectedErr: "invalid implicit meta policy rule: 'ANYY Readers': unknown rule type " +
 				"'ANYY', expected ALL, ANY, or MAJORITY",
@@ -103,8 +109,10 @@ func TestNewApplicationGroupFailure(t *testing.T) {
 		{
 			testName: "When SignatureTypePolicy rule is invalid",
 			applicationMod: func(application *Application) {
-				application.Policies[ReadersPolicyKey].Type = SignaturePolicyType
-				application.Policies[ReadersPolicyKey].Rule = "ANYY Readers"
+				application.Policies[ReadersPolicyKey] = Policy{
+					Rule: "ANYY Readers",
+					Type: SignaturePolicyType,
+				}
 			},
 			expectedErr: "invalid signature policy rule: 'ANYY Readers': Cannot transition " +
 				"token types from VARIABLE [ANYY] to VARIABLE [Readers]",
@@ -112,7 +120,9 @@ func TestNewApplicationGroupFailure(t *testing.T) {
 		{
 			testName: "When ImplicitMetaPolicy type is unknown policy type",
 			applicationMod: func(application *Application) {
-				application.Policies[ReadersPolicyKey].Type = "GreenPolicy"
+				application.Policies[ReadersPolicyKey] = Policy{
+					Type: "GreenPolicy",
+				}
 			},
 			expectedErr: "unknown policy type: GreenPolicy",
 		},
@@ -557,13 +567,13 @@ func TestGetAnchorPeer(t *testing.T) {
 	gt.Expect(err).NotTo(HaveOccurred())
 
 	channelGroup.Groups[ApplicationGroupKey] = applicationGroup
-	config := cb.Config{
+	config := &cb.Config{
 		ChannelGroup: channelGroup,
 	}
 
 	expectedAnchorPeer := AnchorPeer{Host: "host1", Port: 123}
 
-	err = AddAnchorPeer(&config, "Org1", expectedAnchorPeer)
+	err = AddAnchorPeer(config, "Org1", expectedAnchorPeer)
 	gt.Expect(err).NotTo(HaveOccurred())
 
 	anchorPeers, err := GetAnchorPeers(config, "Org1")
@@ -584,7 +594,6 @@ func TestGetAnchorPeerFailures(t *testing.T) {
 
 	orgNoAnchor := Organization{
 		Name:     "Org1",
-		ID:       "Org1MSP",
 		Policies: applicationOrgStandardPolicies(),
 		MSP:      baseMSP(),
 	}
@@ -593,25 +602,22 @@ func TestGetAnchorPeerFailures(t *testing.T) {
 	applicationGroup.Groups[orgNoAnchor.Name] = orgGroup
 
 	channelGroup.Groups[ApplicationGroupKey] = applicationGroup
-	config := cb.Config{
+	config := &cb.Config{
 		ChannelGroup: channelGroup,
 	}
 
 	for _, test := range []struct {
 		name        string
-		config      cb.Config
 		orgName     string
 		expectedErr string
 	}{
 		{
 			name:        "When org does not exist in application channel",
-			config:      config,
 			orgName:     "bad-org",
 			expectedErr: "application org bad-org does not exist in channel config",
 		},
 		{
 			name:        "When org config group does not have an anchor peers value",
-			config:      config,
 			orgName:     "Org1",
 			expectedErr: "application org Org1 does not have anchor peers",
 		},
@@ -620,7 +626,7 @@ func TestGetAnchorPeerFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			gt := NewGomegaWithT(t)
-			_, err := GetAnchorPeers(test.config, test.orgName)
+			_, err := GetAnchorPeers(config, test.orgName)
 			gt.Expect(err).To(MatchError(test.expectedErr))
 		})
 	}
@@ -631,10 +637,14 @@ func baseApplication() Application {
 		Policies: standardPolicies(),
 		Organizations: []Organization{
 			{
-				Name: "Org1",
+				Name:     "Org1",
+				Policies: applicationOrgStandardPolicies(),
+				MSP:      baseMSP(),
 			},
 			{
-				Name: "Org2",
+				Name:     "Org2",
+				Policies: applicationOrgStandardPolicies(),
+				MSP:      baseMSP(),
 			},
 		},
 		Capabilities: map[string]bool{

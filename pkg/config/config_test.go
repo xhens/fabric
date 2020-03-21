@@ -14,7 +14,6 @@ import (
 	"github.com/golang/protobuf/proto"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/tools/protolator"
-	"github.com/hyperledger/fabric/common/tools/protolator/protoext/ordererext"
 	. "github.com/onsi/gomega"
 )
 
@@ -23,7 +22,7 @@ func TestSignConfigUpdate(t *testing.T) {
 
 	gt := NewGomegaWithT(t)
 
-	cert, privateKey := generateCertAndPrivateKey()
+	cert, privateKey := generateCACertAndPrivateKey("org1.example.com")
 	signingIdentity := SigningIdentity{
 		Certificate: cert,
 		PrivateKey:  privateKey,
@@ -211,7 +210,7 @@ func TestNewCreateChannelTx(t *testing.T) {
 	gt.Expect(err).ToNot(HaveOccurred())
 	gt.Expect(envelope).ToNot(BeNil())
 
-	// Unmarshalling actual and expected envelope to set
+	// Unmarshaling actual and expected envelope to set
 	// the expected timestamp to the actual timestamp
 	expectedEnvelope := cb.Envelope{}
 	err = protolator.DeepUnmarshalJSON(bytes.NewBufferString(expectedEnvelopeJSON), &expectedEnvelope)
@@ -258,7 +257,7 @@ func TestNewCreateChannelTx(t *testing.T) {
 
 	expectedData.ConfigUpdate = actualData.ConfigUpdate
 
-	// Remarshalling envelopes with updated timestamps
+	// Remarshaling envelopes with updated timestamps
 	expectedPayload.Data, err = proto.Marshal(&expectedData)
 	gt.Expect(err).NotTo(HaveOccurred())
 
@@ -313,7 +312,10 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 			testName: "When creating the default config template with an invalid ImplicitMetaPolicy rule fails",
 			profileMod: func() Channel {
 				profile := baseProfile()
-				profile.Application.Policies[ReadersPolicyKey].Rule = "ALL"
+				profile.Application.Policies[ReadersPolicyKey] = Policy{
+					Rule: "ALL",
+					Type: ImplicitMetaPolicyType,
+				}
 				return profile
 			},
 			err: errors.New("creating default config template: failed to create application group: " +
@@ -324,7 +326,10 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 			testName: "When creating the default config template with an invalid ImplicitMetaPolicy rule fails",
 			profileMod: func() Channel {
 				profile := baseProfile()
-				profile.Application.Policies[ReadersPolicyKey].Rule = "ANYY Readers"
+				profile.Application.Policies[ReadersPolicyKey] = Policy{
+					Rule: "ANYY Readers",
+					Type: ImplicitMetaPolicyType,
+				}
 				return profile
 			},
 			err: errors.New("creating default config template: failed to create application group: " +
@@ -335,8 +340,10 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 			testName: "When creating the default config template with SignatureTypePolicy and bad rule fails",
 			profileMod: func() Channel {
 				profile := baseProfile()
-				profile.Application.Policies[ReadersPolicyKey].Type = SignaturePolicyType
-				profile.Application.Policies[ReadersPolicyKey].Rule = "ANYY Readers"
+				profile.Application.Policies[ReadersPolicyKey] = Policy{
+					Rule: "ANYY Readers",
+					Type: SignaturePolicyType,
+				}
 				return profile
 			},
 			err: errors.New("creating default config template: failed to create application group: " +
@@ -347,7 +354,10 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 			testName: "When creating the default config template with an unknown policy type fails",
 			profileMod: func() Channel {
 				profile := baseProfile()
-				profile.Application.Policies[ReadersPolicyKey].Type = "GreenPolicy"
+				profile.Application.Policies[ReadersPolicyKey] = Policy{
+					Rule: "ALL",
+					Type: "GreenPolicy",
+				}
 				return profile
 			},
 			err: errors.New("creating default config template: failed to create application group: " +
@@ -395,7 +405,7 @@ func TestCreateSignedConfigUpdateEnvelope(t *testing.T) {
 	gt := NewGomegaWithT(t)
 
 	// create signingIdentity
-	cert, privateKey := generateCertAndPrivateKey()
+	cert, privateKey := generateCACertAndPrivateKey("org1.example.com")
 	signingIdentity := SigningIdentity{
 		Certificate: cert,
 		PrivateKey:  privateKey,
@@ -436,7 +446,7 @@ func TestCreateSignedConfigUpdateEnvelopeFailures(t *testing.T) {
 	gt := NewGomegaWithT(t)
 
 	// create signingIdentity
-	cert, privateKey := generateCertAndPrivateKey()
+	cert, privateKey := generateCACertAndPrivateKey("org1.example.com")
 	signingIdentity := SigningIdentity{
 		Certificate: cert,
 		PrivateKey:  privateKey,
@@ -463,7 +473,7 @@ func TestCreateSignedConfigUpdateEnvelopeFailures(t *testing.T) {
 			configUpdate:    nil,
 			signingIdentity: signingIdentity,
 			configSignature: []*cb.ConfigSignature{configSignature},
-			expectedErr:     "marshalling config update: proto: Marshal called with nil",
+			expectedErr:     "marshaling config update: proto: Marshal called with nil",
 		},
 	}
 
@@ -479,155 +489,6 @@ func TestCreateSignedConfigUpdateEnvelopeFailures(t *testing.T) {
 			gt.Expect(signedEnv).To(BeNil())
 		})
 	}
-}
-
-func TestNewOrgConfigGroup(t *testing.T) {
-	t.Parallel()
-
-	t.Run("success", func(t *testing.T) {
-		t.Parallel()
-		gt := NewGomegaWithT(t)
-
-		// The organization is from network.BasicSolo Profile
-		// configtxgen -printOrg Org1
-		expectedPrintOrg := `{
-		"groups": {},
-		"mod_policy": "Admins",
-		"policies": {
-			"Admins": {
-				"mod_policy": "Admins",
-				"policy": {
-					"type": 3,
-					"value": {
-						"rule": "MAJORITY",
-						"sub_policy": "Admins"
-					}
-				},
-				"version": "0"
-			},
-			"Endorsement": {
-				"mod_policy": "Admins",
-				"policy": {
-					"type": 3,
-					"value": {
-						"rule": "MAJORITY",
-						"sub_policy": "Endorsement"
-					}
-				},
-				"version": "0"
-			},
-			"Readers": {
-				"mod_policy": "Admins",
-				"policy": {
-					"type": 3,
-					"value": {
-						"rule": "ANY",
-						"sub_policy": "Readers"
-					}
-				},
-				"version": "0"
-			},
-			"Writers": {
-				"mod_policy": "Admins",
-				"policy": {
-					"type": 3,
-					"value": {
-						"rule": "ANY",
-						"sub_policy": "Writers"
-					}
-				},
-				"version": "0"
-			}
-		},
-		"values": {
-			"Endpoints": {
-				"mod_policy": "Admins",
-				"value": {
-					"addresses": [
-						"localhost:123"
-					]
-				},
-				"version": "0"
-			},
-			"MSP": {
-				"mod_policy": "Admins",
-				"value": {
-					"config": {
-						"admins": [],
-						"crypto_config": {
-							"identity_identifier_hash_function": "",
-							"signature_hash_family": ""
-						},
-						"fabric_node_ous": {
-							"admin_ou_identifier": {
-								"certificate": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K",
-								"organizational_unit_identifier": ""
-							},
-							"client_ou_identifier": {
-								"certificate": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K",
-								"organizational_unit_identifier": ""
-							},
-							"enable": false,
-							"orderer_ou_identifier": {
-								"certificate": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K",
-								"organizational_unit_identifier": ""
-							},
-							"peer_ou_identifier": {
-								"certificate": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K",
-								"organizational_unit_identifier": ""
-							}
-						},
-						"intermediate_certs": [],
-						"name": "",
-						"organizational_unit_identifiers": [
-							{
-								"certificate": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K",
-								"organizational_unit_identifier": ""
-							}
-						],
-						"revocation_list": [],
-						"root_certs": [],
-						"signing_identity": {
-							"private_signer": {
-								"key_identifier": "",
-								"key_material": null
-							},
-							"public_signer": "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCi0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K"
-						},
-						"tls_intermediate_certs": [],
-						"tls_root_certs": []
-					},
-					"type": 0
-				},
-				"version": "0"
-			}
-		},
-		"version": "0"
-	}
-`
-		org := baseSystemChannelProfile().Orderer.Organizations[0]
-		configGroup, err := newOrgConfigGroup(org)
-		gt.Expect(err).NotTo(HaveOccurred())
-
-		buf := bytes.Buffer{}
-		err = protolator.DeepMarshalJSON(&buf, &ordererext.DynamicOrdererOrgGroup{ConfigGroup: configGroup})
-		gt.Expect(err).NotTo(HaveOccurred())
-
-		gt.Expect(buf.String()).To(MatchJSON(expectedPrintOrg))
-	})
-}
-
-func TestNewOrgConfigGroupFailure(t *testing.T) {
-	t.Parallel()
-
-	gt := NewGomegaWithT(t)
-
-	baseOrg := baseSystemChannelProfile().Orderer.Organizations[0]
-	baseOrg.Policies = nil
-
-	configGroup, err := newOrgConfigGroup(baseOrg)
-	gt.Expect(configGroup).To(BeNil())
-	gt.Expect(err).To(MatchError("no policies defined"))
 }
 
 func TestComputeUpdate(t *testing.T) {
@@ -732,14 +593,15 @@ func baseSystemChannelProfile() Channel {
 	return Channel{
 		ChannelID:    "testsystemchannel",
 		Consortiums:  baseConsortiums(),
-		Orderer:      baseOrderer(),
+		Orderer:      baseSoloOrderer(),
 		Capabilities: map[string]bool{"V2_0": true},
 		Policies:     standardPolicies(),
+		Consortium:   "testconsortium",
 	}
 }
 
-func standardPolicies() map[string]*Policy {
-	return map[string]*Policy{
+func standardPolicies() map[string]Policy {
+	return map[string]Policy{
 		ReadersPolicyKey: {
 			Type: ImplicitMetaPolicyType,
 			Rule: "ANY Readers",
@@ -755,10 +617,10 @@ func standardPolicies() map[string]*Policy {
 	}
 }
 
-func orgStandardPolicies() map[string]*Policy {
+func orgStandardPolicies() map[string]Policy {
 	policies := standardPolicies()
 
-	policies[EndorsementPolicyKey] = &Policy{
+	policies[EndorsementPolicyKey] = Policy{
 		Type: ImplicitMetaPolicyType,
 		Rule: "MAJORITY Endorsement",
 	}
@@ -766,10 +628,10 @@ func orgStandardPolicies() map[string]*Policy {
 	return policies
 }
 
-func applicationOrgStandardPolicies() map[string]*Policy {
+func applicationOrgStandardPolicies() map[string]Policy {
 	policies := orgStandardPolicies()
 
-	policies[LifecycleEndorsementPolicyKey] = &Policy{
+	policies[LifecycleEndorsementPolicyKey] = Policy{
 		Type: ImplicitMetaPolicyType,
 		Rule: "MAJORITY Endorsement",
 	}
@@ -777,13 +639,37 @@ func applicationOrgStandardPolicies() map[string]*Policy {
 	return policies
 }
 
-func ordererStandardPolicies() map[string]*Policy {
+func ordererStandardPolicies() map[string]Policy {
 	policies := standardPolicies()
 
-	policies[BlockValidationPolicyKey] = &Policy{
+	policies[BlockValidationPolicyKey] = Policy{
 		Type: ImplicitMetaPolicyType,
 		Rule: "ANY Writers",
 	}
 
 	return policies
+}
+
+// baseApplicationChannelGroup creates a channel config group
+// that only contains an Application group.
+func baseApplicationChannelGroup() (*cb.ConfigGroup, error) {
+	channelGroup := newConfigGroup()
+
+	application := baseApplication()
+	applicationGroup, err := newApplicationGroup(application)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, org := range application.Organizations {
+		orgGroup, err := newOrgConfigGroup(org)
+		if err != nil {
+			return nil, err
+		}
+		applicationGroup.Groups[org.Name] = orgGroup
+	}
+
+	channelGroup.Groups[ApplicationGroupKey] = applicationGroup
+
+	return channelGroup, nil
 }
