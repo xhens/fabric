@@ -22,7 +22,7 @@ func TestSignConfigUpdate(t *testing.T) {
 
 	gt := NewGomegaWithT(t)
 
-	cert, privateKey := generateCACertAndPrivateKey("org1.example.com")
+	cert, privateKey := generateCACertAndPrivateKey(t, "org1.example.com")
 	signingIdentity := SigningIdentity{
 		Certificate: cert,
 		PrivateKey:  privateKey,
@@ -203,7 +203,7 @@ func TestNewCreateChannelTx(t *testing.T) {
 		"signature": null
 	}`
 
-	profile := baseProfile()
+	profile := baseProfile(t)
 
 	// creating a create channel transaction
 	envelope, err := NewCreateChannelTx(profile)
@@ -281,7 +281,7 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 		{
 			testName: "When creating the default config template with no Admins policies defined fails",
 			profileMod: func() Channel {
-				profile := baseProfile()
+				profile := baseProfile(t)
 				delete(profile.Application.Policies, AdminsPolicyKey)
 				return profile
 			},
@@ -291,7 +291,7 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 		{
 			testName: "When creating the default config template with no Readers policies defined fails",
 			profileMod: func() Channel {
-				profile := baseProfile()
+				profile := baseProfile(t)
 				delete(profile.Application.Policies, ReadersPolicyKey)
 				return profile
 			},
@@ -301,7 +301,7 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 		{
 			testName: "When creating the default config template with no Writers policies defined fails",
 			profileMod: func() Channel {
-				profile := baseProfile()
+				profile := baseProfile(t)
 				delete(profile.Application.Policies, WritersPolicyKey)
 				return profile
 			},
@@ -311,7 +311,7 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 		{
 			testName: "When creating the default config template with an invalid ImplicitMetaPolicy rule fails",
 			profileMod: func() Channel {
-				profile := baseProfile()
+				profile := baseProfile(t)
 				profile.Application.Policies[ReadersPolicyKey] = Policy{
 					Rule: "ALL",
 					Type: ImplicitMetaPolicyType,
@@ -325,7 +325,7 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 		{
 			testName: "When creating the default config template with an invalid ImplicitMetaPolicy rule fails",
 			profileMod: func() Channel {
-				profile := baseProfile()
+				profile := baseProfile(t)
 				profile.Application.Policies[ReadersPolicyKey] = Policy{
 					Rule: "ANYY Readers",
 					Type: ImplicitMetaPolicyType,
@@ -339,7 +339,7 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 		{
 			testName: "When creating the default config template with SignatureTypePolicy and bad rule fails",
 			profileMod: func() Channel {
-				profile := baseProfile()
+				profile := baseProfile(t)
 				profile.Application.Policies[ReadersPolicyKey] = Policy{
 					Rule: "ANYY Readers",
 					Type: SignaturePolicyType,
@@ -353,7 +353,7 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 		{
 			testName: "When creating the default config template with an unknown policy type fails",
 			profileMod: func() Channel {
-				profile := baseProfile()
+				profile := baseProfile(t)
 				profile.Application.Policies[ReadersPolicyKey] = Policy{
 					Rule: "ALL",
 					Type: "GreenPolicy",
@@ -366,7 +366,7 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 		{
 			testName: "When channel ID is not specified in config",
 			profileMod: func() Channel {
-				profile := baseProfile()
+				profile := baseProfile(t)
 				profile.ChannelID = ""
 				return profile
 			},
@@ -375,7 +375,7 @@ func TestNewCreateChannelTxFailure(t *testing.T) {
 		{
 			testName: "When creating the application group fails",
 			profileMod: func() Channel {
-				profile := baseProfile()
+				profile := baseProfile(t)
 				profile.Application.Policies = nil
 				return profile
 			},
@@ -405,7 +405,7 @@ func TestCreateSignedConfigUpdateEnvelope(t *testing.T) {
 	gt := NewGomegaWithT(t)
 
 	// create signingIdentity
-	cert, privateKey := generateCACertAndPrivateKey("org1.example.com")
+	cert, privateKey := generateCACertAndPrivateKey(t, "org1.example.com")
 	signingIdentity := SigningIdentity{
 		Certificate: cert,
 		PrivateKey:  privateKey,
@@ -446,7 +446,7 @@ func TestCreateSignedConfigUpdateEnvelopeFailures(t *testing.T) {
 	gt := NewGomegaWithT(t)
 
 	// create signingIdentity
-	cert, privateKey := generateCACertAndPrivateKey("org1.example.com")
+	cert, privateKey := generateCACertAndPrivateKey(t, "org1.example.com")
 	signingIdentity := SigningIdentity{
 		Certificate: cert,
 		PrivateKey:  privateKey,
@@ -496,7 +496,7 @@ func TestComputeUpdate(t *testing.T) {
 
 	value1Name := "foo"
 	value2Name := "bar"
-	base := cb.Config{
+	base := &cb.Config{
 		ChannelGroup: &cb.ConfigGroup{
 			Version: 7,
 			Values: map[string]*cb.ConfigValue{
@@ -511,7 +511,7 @@ func TestComputeUpdate(t *testing.T) {
 			},
 		},
 	}
-	updated := cb.Config{
+	updated := &cb.Config{
 		ChannelGroup: &cb.ConfigGroup{
 			Values: map[string]*cb.ConfigValue{
 				value1Name: base.ChannelGroup.Values[value1Name],
@@ -520,6 +520,11 @@ func TestComputeUpdate(t *testing.T) {
 				},
 			},
 		},
+	}
+
+	c := ConfigTx{
+		base:    base,
+		updated: updated,
 	}
 
 	channelID := "testChannel"
@@ -542,7 +547,7 @@ func TestComputeUpdate(t *testing.T) {
 		WriteSet:  expectedWriteSet,
 	}
 
-	configUpdate, err := ComputeUpdate(&base, &updated, channelID)
+	configUpdate, err := c.ComputeUpdate(channelID)
 	gt.Expect(err).NotTo(HaveOccurred())
 	gt.Expect(configUpdate).To(Equal(&expectedConfig))
 }
@@ -550,8 +555,13 @@ func TestComputeUpdate(t *testing.T) {
 func TestComputeUpdateFailures(t *testing.T) {
 	t.Parallel()
 
-	base := cb.Config{}
-	updated := cb.Config{}
+	base := &cb.Config{}
+	updated := &cb.Config{}
+
+	c := ConfigTx{
+		base:    base,
+		updated: updated,
+	}
 
 	for _, test := range []struct {
 		name        string
@@ -573,27 +583,27 @@ func TestComputeUpdateFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			gt := NewGomegaWithT(t)
-			configUpdate, err := ComputeUpdate(&base, &updated, test.channelID)
+			configUpdate, err := c.ComputeUpdate(test.channelID)
 			gt.Expect(err).To(MatchError(test.expectedErr))
 			gt.Expect(configUpdate).To(BeNil())
 		})
 	}
 }
 
-func baseProfile() Channel {
+func baseProfile(t *testing.T) Channel {
 	return Channel{
 		ChannelID:    "testchannel",
 		Consortium:   "SampleConsortium",
-		Application:  baseApplication(),
+		Application:  baseApplication(t),
 		Capabilities: map[string]bool{"V2_0": true},
 	}
 }
 
-func baseSystemChannelProfile() Channel {
+func baseSystemChannelProfile(t *testing.T) Channel {
 	return Channel{
 		ChannelID:    "testsystemchannel",
-		Consortiums:  baseConsortiums(),
-		Orderer:      baseSoloOrderer(),
+		Consortiums:  baseConsortiums(t),
+		Orderer:      baseSoloOrderer(t),
 		Capabilities: map[string]bool{"V2_0": true},
 		Policies:     standardPolicies(),
 		Consortium:   "testconsortium",
@@ -652,10 +662,10 @@ func ordererStandardPolicies() map[string]Policy {
 
 // baseApplicationChannelGroup creates a channel config group
 // that only contains an Application group.
-func baseApplicationChannelGroup() (*cb.ConfigGroup, error) {
+func baseApplicationChannelGroup(t *testing.T) (*cb.ConfigGroup, error) {
 	channelGroup := newConfigGroup()
 
-	application := baseApplication()
+	application := baseApplication(t)
 	applicationGroup, err := newApplicationGroup(application)
 	if err != nil {
 		return nil, err
