@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package config
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/golang/protobuf/proto"
@@ -23,19 +24,46 @@ type Application struct {
 	ACLs          map[string]string
 }
 
-// AddApplicationOrg adds an organization to an existing config's Application configuration.
-// Will not error if organization already exists.
-func AddApplicationOrg(config *cb.Config, org Organization) error {
-	appGroup := config.ChannelGroup.Groups[ApplicationGroupKey]
-
-	orgGroup, err := newOrgConfigGroup(org)
-	if err != nil {
-		return fmt.Errorf("failed to create application org %s: %v", org.Name, err)
+// GetApplicationConfiguration returns the existing application configuration values from a config
+// transaction as an Application type. This can be used to retrieve existing values for the application
+// prior to updating the application configuration.
+func (c *ConfigTx) GetApplicationConfiguration() (Application, error) {
+	applicationGroup, ok := c.base.ChannelGroup.Groups[ApplicationGroupKey]
+	if !ok {
+		return Application{}, errors.New("config does not contain application group")
 	}
 
-	appGroup.Groups[org.Name] = orgGroup
+	var applicationOrgs []Organization
+	for orgName := range applicationGroup.Groups {
+		orgConfig, err := c.GetApplicationOrg(orgName)
+		if err != nil {
+			return Application{}, fmt.Errorf("retrieving application org %s: %v", orgName, err)
+		}
 
-	return nil
+		applicationOrgs = append(applicationOrgs, orgConfig)
+	}
+
+	capabilities, err := c.GetApplicationCapabilities()
+	if err != nil {
+		return Application{}, fmt.Errorf("retrieving application capabilities: %v", err)
+	}
+
+	policies, err := c.GetPoliciesForApplication()
+	if err != nil {
+		return Application{}, fmt.Errorf("retrieving application policies: %v", err)
+	}
+
+	acls, err := c.GetApplicationACLs()
+	if err != nil {
+		return Application{}, fmt.Errorf("retrieving application acls: %v", err)
+	}
+
+	return Application{
+		Organizations: applicationOrgs,
+		Capabilities:  capabilities,
+		Policies:      policies,
+		ACLs:          acls,
+	}, nil
 }
 
 // AddAnchorPeer adds an anchor peer to an existing channel config transaction.
@@ -74,7 +102,7 @@ func (c *ConfigTx) AddAnchorPeer(orgName string, newAnchorPeer Address) error {
 	})
 
 	// Add anchor peers config value back to application org
-	err := addValue(applicationOrgGroup, anchorPeersValue(anchorProtos), AdminsPolicyKey)
+	err := setValue(applicationOrgGroup, anchorPeersValue(anchorProtos), AdminsPolicyKey)
 	if err != nil {
 		return err
 	}
@@ -106,7 +134,7 @@ func (c *ConfigTx) RemoveAnchorPeer(orgName string, anchorPeerToRemove Address) 
 			existingAnchorPeers = append(existingAnchorPeers, anchorPeer)
 
 			// Add anchor peers config value back to application org
-			err := addValue(applicationOrgGroup, anchorPeersValue(existingAnchorPeers), AdminsPolicyKey)
+			err := setValue(applicationOrgGroup, anchorPeersValue(existingAnchorPeers), AdminsPolicyKey)
 			if err != nil {
 				return fmt.Errorf("failed to remove anchor peer %v from org %s: %v", anchorPeerToRemove, orgName, err)
 			}
@@ -120,7 +148,7 @@ func (c *ConfigTx) RemoveAnchorPeer(orgName string, anchorPeerToRemove Address) 
 	}
 
 	// Add anchor peers config value back to application org
-	err := addValue(applicationOrgGroup, anchorPeersValue(existingAnchorPeers), AdminsPolicyKey)
+	err := setValue(applicationOrgGroup, anchorPeersValue(existingAnchorPeers), AdminsPolicyKey)
 	if err != nil {
 		return fmt.Errorf("failed to remove anchor peer %v from org %s: %v", anchorPeerToRemove, orgName, err)
 	}
@@ -139,7 +167,7 @@ func (c *ConfigTx) AddACLs(acls map[string]string) error {
 		acls[apiResource] = policyRef
 	}
 
-	err = addValue(c.updated.ChannelGroup.Groups[ApplicationGroupKey], aclValues(acls), AdminsPolicyKey)
+	err = setValue(c.updated.ChannelGroup.Groups[ApplicationGroupKey], aclValues(acls), AdminsPolicyKey)
 	if err != nil {
 		return err
 	}
@@ -158,12 +186,17 @@ func (c *ConfigTx) RemoveACLs(acls []string) error {
 		delete(configACLs, acl)
 	}
 
-	err = addValue(c.updated.ChannelGroup.Groups[ApplicationGroupKey], aclValues(configACLs), AdminsPolicyKey)
+	err = setValue(c.updated.ChannelGroup.Groups[ApplicationGroupKey], aclValues(configACLs), AdminsPolicyKey)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// GetApplicationACLs returns a map of application acls from a config transaction.
+func (c *ConfigTx) GetApplicationACLs() (map[string]string, error) {
+	return getACLs(c.base)
 }
 
 // getACLs returns a map of ACLS for given config application.
@@ -217,7 +250,7 @@ func (c *ConfigTx) GetAnchorPeers(orgName string) ([]Address, error) {
 	return anchorPeers, nil
 }
 
-// AddApplicationOrg adds an organization to an existing config's Application configuration.
+// AddApplicationOrg adds an organization to an existing Application configuration.
 // Will not error if organization already exists.
 func (c *ConfigTx) AddApplicationOrg(org Organization) error {
 	appGroup := c.updated.ChannelGroup.Groups[ApplicationGroupKey]
@@ -245,14 +278,14 @@ func newApplicationGroup(application Application) (*cb.ConfigGroup, error) {
 	}
 
 	if len(application.ACLs) > 0 {
-		err = addValue(applicationGroup, aclValues(application.ACLs), AdminsPolicyKey)
+		err = setValue(applicationGroup, aclValues(application.ACLs), AdminsPolicyKey)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	if len(application.Capabilities) > 0 {
-		err = addValue(applicationGroup, capabilitiesValue(application.Capabilities), AdminsPolicyKey)
+		err = setValue(applicationGroup, capabilitiesValue(application.Capabilities), AdminsPolicyKey)
 		if err != nil {
 			return nil, err
 		}
