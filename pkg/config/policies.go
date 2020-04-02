@@ -18,6 +18,31 @@ import (
 	"github.com/hyperledger/fabric/common/policydsl"
 )
 
+// UpdateConsortiumChannelCreationPolicy update a consortium group's channel creation policy value
+func (c *ConfigTx) UpdateConsortiumChannelCreationPolicy(consortiumName string, policy Policy) error {
+	consortium, ok := c.updated.ChannelGroup.Groups[ConsortiumsGroupKey].Groups[consortiumName]
+	if !ok {
+		return fmt.Errorf("consortium %s does not exist in channel config", consortiumName)
+	}
+
+	imp, err := implicitMetaFromString(policy.Rule)
+	if err != nil {
+		return fmt.Errorf("invalid implicit meta policy rule '%s': %v", policy.Rule, err)
+	}
+
+	implicitMetaPolicy, err := implicitMetaPolicy(imp.SubPolicy, imp.Rule)
+	if err != nil {
+		return fmt.Errorf("failed to make implicit meta policy: %v", err)
+	}
+
+	// update channel creation policy value back to consortium
+	if err = setValue(consortium, channelCreationPolicyValue(implicitMetaPolicy), ordererAdminsPolicyName); err != nil {
+		return fmt.Errorf("failed to update channel creation policy to consortium %s: %v", consortiumName, err)
+	}
+
+	return nil
+}
+
 // GetPoliciesForConsortiums returns a map of policies for channel consortiums.
 func (c *ConfigTx) GetPoliciesForConsortiums() (map[string]Policy, error) {
 	consortiums, ok := c.base.ChannelGroup.Groups[ConsortiumsGroupKey]
@@ -87,6 +112,11 @@ func (c *ConfigTx) GetPoliciesForApplicationOrg(orgName string) (map[string]Poli
 	}
 
 	return getPolicies(orgGroup.Policies)
+}
+
+// GetPoliciesForChannel returns a map of policies for channel configuration.
+func (c *ConfigTx) GetPoliciesForChannel() (map[string]Policy, error) {
+	return getPolicies(c.base.ChannelGroup.Policies)
 }
 
 // AddApplicationPolicy modifies an existing application policy configuration.
@@ -217,6 +247,23 @@ func (c *ConfigTx) RemoveOrdererOrgPolicy(orgName, policyName string) error {
 	}
 
 	return removePolicy(c.updated.ChannelGroup.Groups[OrdererGroupKey].Groups[orgName], policyName, policies)
+}
+
+// AddChannelPolicy adds a channel level policy.
+// When the policy exists it will overwrite the existing policy.
+func (c *ConfigTx) AddChannelPolicy(modPolicy, policyName string, policy Policy) error {
+	return addPolicy(c.updated.ChannelGroup, modPolicy, policyName, policy)
+}
+
+// RemoveChannelPolicy removes an existing channel level policy.
+// The policy must exist in the config.
+func (c *ConfigTx) RemoveChannelPolicy(policyName string) error {
+	policies, err := c.GetPoliciesForChannel()
+	if err != nil {
+		return err
+	}
+
+	return removePolicy(c.updated.ChannelGroup, policyName, policies)
 }
 
 // getPolicies returns a map of Policy from given map of ConfigPolicy in organization config group.
@@ -414,6 +461,10 @@ func addPolicies(cg *cb.ConfigGroup, policyMap map[string]Policy, modPolicy stri
 }
 
 func addPolicy(cg *cb.ConfigGroup, modPolicy, policyName string, policy Policy) error {
+	if cg.Policies == nil {
+		cg.Policies = make(map[string]*cb.ConfigPolicy)
+	}
+
 	switch policy.Type {
 	case ImplicitMetaPolicyType:
 		imp, err := implicitMetaFromString(policy.Rule)

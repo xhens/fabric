@@ -192,7 +192,7 @@ func TestUpdateOrdererConfiguration(t *testing.T) {
 	gt := NewGomegaWithT(t)
 
 	baseOrdererConf := baseSoloOrderer(t)
-	certBase64, pkBase64, crlBase64 := certPrivKeyCRLBase64(baseOrdererConf.Organizations[0].MSP)
+	certBase64, pkBase64, crlBase64 := certPrivKeyCRLBase64(t, baseOrdererConf.Organizations[0].MSP)
 
 	ordererGroup, err := newOrdererGroup(baseOrdererConf)
 	gt.Expect(err).NotTo(HaveOccurred())
@@ -624,7 +624,7 @@ func TestGetOrdererConfigurationFailure(t *testing.T) {
 			testName:    "When the config contains an unknown consensus type",
 			ordererType: ConsensusTypeSolo,
 			configMod: func(config *cb.Config, gt *GomegaWithT) {
-				err := addValue(config.ChannelGroup.Groups[OrdererGroupKey], consensusTypeValue("badtype", nil, 0), AdminsPolicyKey)
+				err := setValue(config.ChannelGroup.Groups[OrdererGroupKey], consensusTypeValue("badtype", nil, 0), AdminsPolicyKey)
 				gt.Expect(err).NotTo(HaveOccurred())
 			},
 			expectedErr: "config contains unknown consensus type 'badtype'",
@@ -641,7 +641,7 @@ func TestGetOrdererConfigurationFailure(t *testing.T) {
 			testName:    "Failed unmarshaling etcd raft metadata",
 			ordererType: ConsensusTypeEtcdRaft,
 			configMod: func(config *cb.Config, gt *GomegaWithT) {
-				err := addValue(config.ChannelGroup.Groups[OrdererGroupKey], consensusTypeValue(ConsensusTypeEtcdRaft, nil, 0), AdminsPolicyKey)
+				err := setValue(config.ChannelGroup.Groups[OrdererGroupKey], consensusTypeValue(ConsensusTypeEtcdRaft, nil, 0), AdminsPolicyKey)
 				gt.Expect(err).NotTo(HaveOccurred())
 			},
 			expectedErr: "unmarshaling etcd raft metadata: missing etcdraft metadata options in config",
@@ -650,7 +650,7 @@ func TestGetOrdererConfigurationFailure(t *testing.T) {
 			testName:    "Invalid batch timeout",
 			ordererType: ConsensusTypeSolo,
 			configMod: func(config *cb.Config, gt *GomegaWithT) {
-				err := addValue(config.ChannelGroup.Groups[OrdererGroupKey], batchTimeoutValue("invalidtime"), AdminsPolicyKey)
+				err := setValue(config.ChannelGroup.Groups[OrdererGroupKey], batchTimeoutValue("invalidtime"), AdminsPolicyKey)
 				gt.Expect(err).NotTo(HaveOccurred())
 			},
 			expectedErr: "batch timeout configuration 'invalidtime' is not a duration string",
@@ -690,7 +690,7 @@ func TestGetOrdererConfigurationFailure(t *testing.T) {
 				updated: config,
 			}
 
-			err = addValue(c.updated.ChannelGroup, ordererAddressesValue(baseOrdererConfig.Addresses), ordererAdminsPolicyName)
+			err = setValue(c.updated.ChannelGroup, ordererAddressesValue(baseOrdererConfig.Addresses), ordererAdminsPolicyName)
 			gt.Expect(err).NotTo(HaveOccurred())
 
 			if tt.configMod != nil {
@@ -732,7 +732,7 @@ func TestAddOrdererOrg(t *testing.T) {
 		},
 		MSP: baseMSP(t),
 	}
-	certBase64, pkBase64, crlBase64 := certPrivKeyCRLBase64(org.MSP)
+	certBase64, pkBase64, crlBase64 := certPrivKeyCRLBase64(t, org.MSP)
 
 	expectedConfigJSON := fmt.Sprintf(`
 {
