@@ -53,6 +53,7 @@ func (s *broadcastClient) getAck() error {
 
 func main() {
 	conf, err := localconfig.Load()
+	fmt.Printf("test 1")
 	if err != nil {
 		fmt.Println("failed to load config:", err)
 		os.Exit(1)

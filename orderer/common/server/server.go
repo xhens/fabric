@@ -65,6 +65,8 @@ func (rs *responseSender) SendStatusResponse(status cb.Status) error {
 	return rs.Send(reply)
 }
 
+// TODO: to be modified
+
 // SendBlockResponse sends block data and ignores pvtDataMap.
 func (rs *responseSender) SendBlockResponse(
 	block *cb.Block,

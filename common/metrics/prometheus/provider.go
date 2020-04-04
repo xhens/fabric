@@ -75,3 +75,5 @@ type Histogram struct{ kitmetrics.Histogram }
 func (h *Histogram) With(labelValues ...string) metrics.Histogram {
 	return &Histogram{Histogram: h.Histogram.With(labelValues...)}
 }
+
+// TODO: Monitoring with Prometheus
