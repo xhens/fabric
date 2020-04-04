@@ -91,6 +91,11 @@ func Example_systemChannel() {
 		panic(err)
 	}
 
+	err = c.RemoveConsortium("SampleConsortium2")
+	if err != nil {
+		panic(err)
+	}
+
 	// Compute the delta
 	configUpdate, err := c.ComputeUpdate("testsyschannel")
 	if err != nil {
@@ -206,7 +211,7 @@ func Example_systemChannel() {
 	//					"mod_policy": "",
 	//					"policies": {},
 	//					"values": {},
-	//					"version": "0"
+	//					"version": "1"
 	//				}
 	//			},
 	//			"mod_policy": "",
@@ -225,7 +230,7 @@ func Example_orderer() {
 
 	// Must retrieve the current orderer configuration from block and modify
 	// the desired values
-	orderer, err := c.GetOrdererConfiguration()
+	orderer, err := c.OrdererConfiguration()
 	if err != nil {
 		panic(err)
 	}
@@ -396,7 +401,6 @@ func Example_organization() {
 
 func ExampleNewCreateChannelTx() {
 	channel := config.Channel{
-		ChannelID:  "testchannel",
 		Consortium: "SampleConsortium",
 		Application: config.Application{
 			Organizations: []config.Organization{
@@ -433,8 +437,8 @@ func ExampleNewCreateChannelTx() {
 			},
 		},
 	}
-
-	envelope, err := config.NewCreateChannelTx(channel)
+	channelID := "testchannel"
+	envelope, err := config.NewCreateChannelTx(channel, channelID)
 	if err != nil {
 		panic(err)
 	}
@@ -1363,6 +1367,21 @@ func fetchSystemChannelConfig() *cb.Config {
 				config.ConsortiumsGroupKey: {
 					Groups: map[string]*cb.ConfigGroup{
 						"SampleConsortium": {
+							Groups: map[string]*cb.ConfigGroup{},
+							Values: map[string]*cb.ConfigValue{
+								config.ChannelCreationPolicyKey: {
+									ModPolicy: "/Channel/Orderer/Admins",
+									Value: marshalOrPanic(&cb.Policy{
+										Type: 3,
+										Value: marshalOrPanic(&cb.ImplicitMetaPolicy{
+											Rule:      cb.ImplicitMetaPolicy_ANY,
+											SubPolicy: config.AdminsPolicyKey,
+										}),
+									}),
+								},
+							},
+						},
+						"SampleConsortium2": {
 							Groups: map[string]*cb.ConfigGroup{},
 							Values: map[string]*cb.ConfigValue{
 								config.ChannelCreationPolicyKey: {

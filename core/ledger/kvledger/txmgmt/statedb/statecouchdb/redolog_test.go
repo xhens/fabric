@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/hyperledger/fabric/core/ledger/internal/pkg/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -63,7 +63,7 @@ func TestRedoLogger(t *testing.T) {
 }
 
 func TestCouchdbRedoLogger(t *testing.T) {
-	testEnv.init(t, &statedb.Cache{})
+	testEnv.init(t, nil)
 	defer testEnv.cleanup()
 
 	// commitToRedologAndRestart - a helper function that commits directly to redologs and restart the statedb
