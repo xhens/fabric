@@ -16,8 +16,7 @@ import (
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/dataformat"
 	"github.com/hyperledger/fabric/common/metrics"
-	"github.com/hyperledger/fabric/core/common/ccprovider"
-	"github.com/hyperledger/fabric/core/ledger/internal/pkg/version"
+	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
 	"github.com/hyperledger/fabric/core/ledger/util/couchdb"
 	"github.com/pkg/errors"
@@ -252,17 +251,15 @@ func (vdb *VersionedDB) getNamespaceDBHandle(namespace string) (*couchdb.CouchDa
 }
 
 // ProcessIndexesForChaincodeDeploy creates indexes for a specified namespace
-func (vdb *VersionedDB) ProcessIndexesForChaincodeDeploy(namespace string, fileEntries []*ccprovider.TarFileEntry) error {
+func (vdb *VersionedDB) ProcessIndexesForChaincodeDeploy(namespace string, indexFilesData map[string][]byte) error {
 	db, err := vdb.getNamespaceDBHandle(namespace)
 	if err != nil {
 		return err
 	}
-	for _, fileEntry := range fileEntries {
-		indexData := fileEntry.FileContent
-		filename := fileEntry.FileHeader.Name
+	for indexFileName, indexData := range indexFilesData {
 		_, err = db.CreateIndex(string(indexData))
 		if err != nil {
-			return errors.WithMessagef(err, "error creating index from file [%s] for channel [%s]", filename, namespace)
+			return errors.WithMessagef(err, "error creating index from file [%s] for channel [%s]", indexFileName, namespace)
 		}
 	}
 	return nil
@@ -704,7 +701,7 @@ func (vdb *VersionedDB) postCommitProcessing(committers []*committer, namespaces
 	wg.Wait()
 	select {
 	case err := <-errChan:
-		return err
+		return errors.WithStack(err)
 	default:
 		return nil
 	}
@@ -764,7 +761,7 @@ func (vdb *VersionedDB) ensureFullCommitAndRecordSavepoint(height *version.Heigh
 	select {
 	case err := <-errsChan:
 		logger.Errorf("Failed to perform full commit")
-		return errors.WithMessage(err, "failed to perform full commit")
+		return errors.Wrap(err, "failed to perform full commit")
 	default:
 		logger.Debugf("All changes have been flushed to the disk")
 	}
@@ -951,7 +948,7 @@ func (scanner *queryScanner) GetBookmarkAndClose() string {
 
 func constructCacheValue(v *statedb.VersionedValue, rev string) *CacheValue {
 	return &CacheValue{
-		VersionBytes:   v.Version.ToBytes(),
+		Version:        v.Version.ToBytes(),
 		Value:          v.Value,
 		Metadata:       v.Metadata,
 		AdditionalInfo: []byte(rev),
@@ -959,7 +956,7 @@ func constructCacheValue(v *statedb.VersionedValue, rev string) *CacheValue {
 }
 
 func constructVersionedValue(cv *CacheValue) (*statedb.VersionedValue, error) {
-	height, _, err := version.NewHeightFromBytes(cv.VersionBytes)
+	height, _, err := version.NewHeightFromBytes(cv.Version)
 	if err != nil {
 		return nil, err
 	}

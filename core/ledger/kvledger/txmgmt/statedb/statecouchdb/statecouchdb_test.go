@@ -16,10 +16,8 @@ import (
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/dataformat"
-	"github.com/hyperledger/fabric/common/ledger/testutil"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
-	"github.com/hyperledger/fabric/core/common/ccprovider"
-	"github.com/hyperledger/fabric/core/ledger/internal/pkg/version"
+	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/commontests"
 	"github.com/hyperledger/fabric/core/ledger/util/couchdb"
@@ -73,7 +71,7 @@ func TestGetStateFromCache(t *testing.T) {
 	cacheValue := &CacheValue{
 		Value:          []byte("value1"),
 		Metadata:       []byte("meta1"),
-		VersionBytes:   version.NewHeight(1, 1).ToBytes(),
+		Version:        version.NewHeight(1, 1).ToBytes(),
 		AdditionalInfo: []byte("rev1"),
 	}
 	require.NoError(t, env.cache.putState(chainID, "ns", "key1", cacheValue))
@@ -136,13 +134,13 @@ func TestGetVersionFromCache(t *testing.T) {
 	cacheValue := &CacheValue{
 		Value:          []byte("value1"),
 		Metadata:       []byte("meta1"),
-		VersionBytes:   version.NewHeight(1, 1).ToBytes(),
+		Version:        version.NewHeight(1, 1).ToBytes(),
 		AdditionalInfo: []byte("rev1"),
 	}
 	require.NoError(t, env.cache.putState(chainID, "ns", "key1", cacheValue))
 
 	ver, err = db.GetVersion("ns", "key1")
-	expectedVer, _, err := version.NewHeightFromBytes(cacheValue.VersionBytes)
+	expectedVer, _, err := version.NewHeightFromBytes(cacheValue.Version)
 	require.NoError(t, err)
 	require.Equal(t, expectedVer, ver)
 
@@ -194,14 +192,14 @@ func TestGetMultipleStatesFromCache(t *testing.T) {
 	cacheValue1 := &CacheValue{
 		Value:          []byte("value1"),
 		Metadata:       []byte("meta1"),
-		VersionBytes:   version.NewHeight(1, 1).ToBytes(),
+		Version:        version.NewHeight(1, 1).ToBytes(),
 		AdditionalInfo: []byte("rev1"),
 	}
 	require.NoError(t, env.cache.putState(chainID, "ns", "key1", cacheValue1))
 	cacheValue2 := &CacheValue{
 		Value:          []byte("value2"),
 		Metadata:       []byte("meta2"),
-		VersionBytes:   version.NewHeight(1, 1).ToBytes(),
+		Version:        version.NewHeight(1, 1).ToBytes(),
 		AdditionalInfo: []byte("rev2"),
 	}
 	require.NoError(t, env.cache.putState(chainID, "ns", "key2", cacheValue2))
@@ -576,15 +574,12 @@ func TestHandleChaincodeDeploy(t *testing.T) {
 	savePoint := version.NewHeight(2, 22)
 	db.ApplyUpdates(batch, savePoint)
 
-	//Create a tar file for test with 4 index definitions and 2 side dbs
-	dbArtifactsTarBytes := testutil.CreateTarBytesForTest(
-		[]*testutil.TarFileEntry{
-			{Name: "META-INF/statedb/couchdb/indexes/indexColorSortName.json", Body: `{"index":{"fields":[{"color":"desc"}]},"ddoc":"indexColorSortName","name":"indexColorSortName","type":"json"}`},
-			{Name: "META-INF/statedb/couchdb/indexes/indexSizeSortName.json", Body: `{"index":{"fields":[{"size":"desc"}]},"ddoc":"indexSizeSortName","name":"indexSizeSortName","type":"json"}`},
-			{Name: "META-INF/statedb/couchdb/collections/collectionMarbles/indexes/indexCollMarbles.json", Body: `{"index":{"fields":["docType","owner"]},"ddoc":"indexCollectionMarbles", "name":"indexCollectionMarbles","type":"json"}`},
-			{Name: "META-INF/statedb/couchdb/collections/collectionMarblesPrivateDetails/indexes/indexCollPrivDetails.json", Body: `{"index":{"fields":["docType","price"]},"ddoc":"indexPrivateDetails", "name":"indexPrivateDetails","type":"json"}`},
-		},
-	)
+	indexData := map[string][]byte{
+		"META-INF/statedb/couchdb/indexes/indexColorSortName.json":                                               []byte(`{"index":{"fields":[{"color":"desc"}]},"ddoc":"indexColorSortName","name":"indexColorSortName","type":"json"}`),
+		"META-INF/statedb/couchdb/indexes/indexSizeSortName.json":                                                []byte(`{"index":{"fields":[{"size":"desc"}]},"ddoc":"indexSizeSortName","name":"indexSizeSortName","type":"json"}`),
+		"META-INF/statedb/couchdb/collections/collectionMarbles/indexes/indexCollMarbles.json":                   []byte(`{"index":{"fields":["docType","owner"]},"ddoc":"indexCollectionMarbles", "name":"indexCollectionMarbles","type":"json"}`),
+		"META-INF/statedb/couchdb/collections/collectionMarblesPrivateDetails/indexes/indexCollPrivDetails.json": []byte(`{"index":{"fields":["docType","price"]},"ddoc":"indexPrivateDetails", "name":"indexPrivateDetails","type":"json"}`),
+	}
 
 	//Create a query
 	queryString := `{"selector":{"owner":"fred"}}`
@@ -604,10 +599,7 @@ func TestHandleChaincodeDeploy(t *testing.T) {
 		t.Fatalf("Couchdb state impl is expected to implement interface `statedb.IndexCapable`")
 	}
 
-	fileEntries, errExtract := ccprovider.ExtractFileEntries(dbArtifactsTarBytes, "couchdb")
-	assert.NoError(t, errExtract)
-
-	indexCapable.ProcessIndexesForChaincodeDeploy("ns1", fileEntries["META-INF/statedb/couchdb/indexes"])
+	indexCapable.ProcessIndexesForChaincodeDeploy("ns1", indexData)
 	//Sleep to allow time for index creation
 	time.Sleep(100 * time.Millisecond)
 	//Create a query with a sort
@@ -649,24 +641,18 @@ func TestHandleChaincodeDeployErroneousIndexFile(t *testing.T) {
 	batch.Put("ns1", "key1", []byte(`{"asset_name": "marble1","color": "blue","size": 1,"owner": "tom"}`), version.NewHeight(1, 1))
 	batch.Put("ns1", "key2", []byte(`{"asset_name": "marble2","color": "blue","size": 2,"owner": "jerry"}`), version.NewHeight(1, 2))
 
-	// Create a tar file for test with 2 index definitions - one of them being errorneous
 	badSyntaxFileContent := `{"index":{"fields": This is a bad json}`
-	dbArtifactsTarBytes := testutil.CreateTarBytesForTest(
-		[]*testutil.TarFileEntry{
-			{Name: "META-INF/statedb/couchdb/indexes/indexSizeSortName.json", Body: `{"index":{"fields":[{"size":"desc"}]},"ddoc":"indexSizeSortName","name":"indexSizeSortName","type":"json"}`},
-			{Name: "META-INF/statedb/couchdb/indexes/badSyntax.json", Body: badSyntaxFileContent},
-		},
-	)
+	indexData := map[string][]byte{
+		"META-INF/statedb/couchdb/indexes/indexSizeSortName.json": []byte(`{"index":{"fields":[{"size":"desc"}]},"ddoc":"indexSizeSortName","name":"indexSizeSortName","type":"json"}`),
+		"META-INF/statedb/couchdb/indexes/badSyntax.json":         []byte(badSyntaxFileContent),
+	}
 
 	indexCapable, ok := db.(statedb.IndexCapable)
 	if !ok {
 		t.Fatalf("Couchdb state impl is expected to implement interface `statedb.IndexCapable`")
 	}
 
-	fileEntries, errExtract := ccprovider.ExtractFileEntries(dbArtifactsTarBytes, "couchdb")
-	assert.NoError(t, errExtract)
-
-	indexCapable.ProcessIndexesForChaincodeDeploy("ns1", fileEntries["META-INF/statedb/couchdb/indexes"])
+	indexCapable.ProcessIndexesForChaincodeDeploy("ns1", indexData)
 
 	//Sleep to allow time for index creation
 	time.Sleep(100 * time.Millisecond)
@@ -791,12 +777,9 @@ func TestPaginatedQuery(t *testing.T) {
 	savePoint := version.NewHeight(2, 22)
 	db.ApplyUpdates(batch, savePoint)
 
-	// Create a tar file for test with an index for size
-	dbArtifactsTarBytes := testutil.CreateTarBytesForTest(
-		[]*testutil.TarFileEntry{
-			{Name: "META-INF/statedb/couchdb/indexes/indexSizeSortName.json", Body: `{"index":{"fields":[{"size":"desc"}]},"ddoc":"indexSizeSortName","name":"indexSizeSortName","type":"json"}`},
-		},
-	)
+	indexData := map[string][]byte{
+		"META-INF/statedb/couchdb/indexes/indexSizeSortName.json": []byte(`{"index":{"fields":[{"size":"desc"}]},"ddoc":"indexSizeSortName","name":"indexSizeSortName","type":"json"}`),
+	}
 
 	// Create a query
 	queryString := `{"selector":{"color":"red"}}`
@@ -813,10 +796,7 @@ func TestPaginatedQuery(t *testing.T) {
 		t.Fatalf("Couchdb state impl is expected to implement interface `statedb.IndexCapable`")
 	}
 
-	fileEntries, errExtract := ccprovider.ExtractFileEntries(dbArtifactsTarBytes, "couchdb")
-	assert.NoError(t, errExtract)
-
-	indexCapable.ProcessIndexesForChaincodeDeploy("ns1", fileEntries["META-INF/statedb/couchdb/indexes"])
+	indexCapable.ProcessIndexesForChaincodeDeploy("ns1", indexData)
 	// Sleep to allow time for index creation
 	time.Sleep(100 * time.Millisecond)
 	// Create a query with a sort
@@ -1177,7 +1157,7 @@ func TestLoadCommittedVersion(t *testing.T) {
 	cacheValue := &CacheValue{
 		Value:          []byte("value1"),
 		Metadata:       []byte("meta1"),
-		VersionBytes:   version.NewHeight(1, 1).ToBytes(),
+		Version:        version.NewHeight(1, 1).ToBytes(),
 		AdditionalInfo: []byte("rev1"),
 	}
 	require.NoError(t, env.cache.putState(chainID, "ns1", "key1", cacheValue))
@@ -1185,7 +1165,7 @@ func TestLoadCommittedVersion(t *testing.T) {
 	cacheValue = &CacheValue{
 		Value:          []byte("value2"),
 		Metadata:       []byte("meta2"),
-		VersionBytes:   version.NewHeight(1, 2).ToBytes(),
+		Version:        version.NewHeight(1, 2).ToBytes(),
 		AdditionalInfo: []byte("rev2"),
 	}
 	require.NoError(t, env.cache.putState(chainID, "ns1", "key2", cacheValue))
@@ -1193,7 +1173,7 @@ func TestLoadCommittedVersion(t *testing.T) {
 	cacheValue = &CacheValue{
 		Value:          []byte("value3"),
 		Metadata:       []byte("meta3"),
-		VersionBytes:   version.NewHeight(1, 3).ToBytes(),
+		Version:        version.NewHeight(1, 3).ToBytes(),
 		AdditionalInfo: []byte("rev3"),
 	}
 	require.NoError(t, env.cache.putState(chainID, "ns2", "key1", cacheValue))

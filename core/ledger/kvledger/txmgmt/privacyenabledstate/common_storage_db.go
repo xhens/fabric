@@ -16,7 +16,7 @@ import (
 	"github.com/hyperledger/fabric/core/common/ccprovider"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/cceventmgmt"
-	"github.com/hyperledger/fabric/core/ledger/internal/pkg/version"
+	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/bookkeeping"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchdb"
@@ -305,12 +305,16 @@ func (s *CommonStorageDB) HandleChaincodeDeploy(chaincodeDefinition *cceventmgmt
 		return nil
 	}
 
-	for directoryPath, archiveDirectoryEntries := range dbArtifacts {
+	for directoryPath, indexFiles := range dbArtifacts {
 		// split the directory name
 		directoryPathArray := strings.Split(directoryPath, "/")
 		// process the indexes for the chain
+		indexFilesData := make(map[string][]byte)
+		for _, f := range indexFiles {
+			indexFilesData[f.FileHeader.Name] = f.FileContent
+		}
 		if directoryPathArray[3] == "indexes" {
-			err := indexCapable.ProcessIndexesForChaincodeDeploy(chaincodeDefinition.Name, archiveDirectoryEntries)
+			err := indexCapable.ProcessIndexesForChaincodeDeploy(chaincodeDefinition.Name, indexFilesData)
 			if err != nil {
 				logger.Errorf("Error processing index for chaincode [%s]: %s", chaincodeDefinition.Name, err)
 			}
@@ -324,7 +328,7 @@ func (s *CommonStorageDB) HandleChaincodeDeploy(chaincodeDefinition *cceventmgmt
 				logger.Errorf("Error processing index for chaincode [%s]: cannot create an index for an undefined collection=[%s]", chaincodeDefinition.Name, collectionName)
 			} else {
 				err := indexCapable.ProcessIndexesForChaincodeDeploy(derivePvtDataNs(chaincodeDefinition.Name, collectionName),
-					archiveDirectoryEntries)
+					indexFilesData)
 				if err != nil {
 					logger.Errorf("Error processing collection index for chaincode [%s]: %s", chaincodeDefinition.Name, err)
 				}
