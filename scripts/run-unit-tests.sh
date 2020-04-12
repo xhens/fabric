@@ -15,6 +15,7 @@ excluded_packages=(
 
 # packages that must be run serially
 serial_packages=(
+    "github.com/hyperledger/fabric/gossip/..."
 )
 
 # packages which need to be tested with build tag pkcs11

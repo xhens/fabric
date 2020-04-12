@@ -292,17 +292,11 @@
   version = "v1.2.1"
 
 [[projects]]
-  digest = "1:445011b46c9874de479d56206ffe827ccc712e3507f5e6cfc338debd83f8e063"
+  digest = "1:10bc473f5f0ccc0409745fc7a854f87920ef22237e6148bf42b8f569db927c19"
   name = "github.com/golang/protobuf"
   packages = [
     "jsonpb",
     "proto",
-    "protoc-gen-go",
-    "protoc-gen-go/descriptor",
-    "protoc-gen-go/generator",
-    "protoc-gen-go/generator/internal/remap",
-    "protoc-gen-go/grpc",
-    "protoc-gen-go/plugin",
     "ptypes",
     "ptypes/any",
     "ptypes/duration",
@@ -843,16 +837,6 @@
   revision = "2aa609cf4a9d7d1126360de73b55b6002f9e052a"
 
 [[projects]]
-  digest = "1:03004f72cd37290aa0cba90b66d418f3a7cfb47220207398b561e6abe7aa8f74"
-  name = "golang.org/x/lint"
-  packages = [
-    ".",
-    "golint",
-  ]
-  pruneopts = "NUT"
-  revision = "959b441ac422379a43da2230f62be024250818b0"
-
-[[projects]]
   branch = "master"
   digest = "1:8dceb0c226ef5810bd2d51db196cef3efba52e87e6540331b2bcaa8f4be0d279"
   name = "golang.org/x/net"
@@ -920,11 +904,10 @@
   version = "v0.3.2"
 
 [[projects]]
-  branch = "release-branch.go1.13"
-  digest = "1:ee5b8d737be478890647c1cc2618b5084600f768c0281ca3deeaba6e4de7d8a1"
+  branch = "release-branch.go1.14"
+  digest = "1:e48760fc099273347f411f9def6122238a06afe0f5b5d242db0e66cf0de94948"
   name = "golang.org/x/tools"
   packages = [
-    "cmd/goimports",
     "go/ast/astutil",
     "go/gcexportdata",
     "go/internal/gcimporter",
@@ -933,12 +916,11 @@
     "go/types/typeutil",
     "internal/fastwalk",
     "internal/gopathwalk",
-    "internal/imports",
-    "internal/module",
     "internal/semver",
+    "internal/span",
   ]
   pruneopts = "NUT"
-  revision = "65e3620a7ae7ac25e8494a60f0e5ef4e4fba03b3"
+  revision = "575de47986ce07f39826bf8d5e365d5ebf51ee63"
 
 [[projects]]
   branch = "master"
@@ -1066,7 +1048,6 @@
     "github.com/go-kit/kit/metrics/statsd",
     "github.com/golang/protobuf/jsonpb",
     "github.com/golang/protobuf/proto",
-    "github.com/golang/protobuf/protoc-gen-go",
     "github.com/golang/protobuf/ptypes",
     "github.com/golang/protobuf/ptypes/empty",
     "github.com/golang/protobuf/ptypes/timestamp",
@@ -1134,8 +1115,6 @@
     "go.uber.org/zap/zapgrpc",
     "go.uber.org/zap/zaptest/observer",
     "golang.org/x/crypto/sha3",
-    "golang.org/x/lint/golint",
-    "golang.org/x/tools/cmd/goimports",
     "golang.org/x/tools/go/packages",
     "google.golang.org/grpc",
     "google.golang.org/grpc/balancer",

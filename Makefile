@@ -60,8 +60,9 @@ BUILD_DIR ?= build
 EXTRA_VERSION ?= $(shell git rev-parse --short HEAD)
 PROJECT_VERSION=$(BASE_VERSION)-snapshot-$(EXTRA_VERSION)
 
-#TWO_DIGIT_VERSION is derived, e.g. "2.0", especially useful as a local tag for two digit references to most recent baseos and ccenv patch releases
-TWO_DIGIT_VERSION = $(shell echo $(BASE_VERSION) | cut -d'.' -f1,2)
+# TWO_DIGIT_VERSION is derived, e.g. "2.0", especially useful as a local tag
+# for two digit references to most recent baseos and ccenv patch releases
+TWO_DIGIT_VERSION = $(shell echo $(BASE_VERSION) | cut -d '.' -f 1,2)
 
 PKGNAME = github.com/hyperledger/fabric
 ARCH=$(shell go env GOARCH)
@@ -111,7 +112,7 @@ help-docs: native
 	@scripts/generateHelpDocs.sh
 
 .PHONY: spelling
-spelling:
+spelling: gotool.misspell
 	@scripts/check_spelling.sh
 
 .PHONY: references
@@ -163,27 +164,27 @@ profile: export JOB_TYPE=PROFILE
 profile: unit-test
 
 .PHONY: linter
-linter: check-deps gotools
+linter: check-deps gotool.goimports
 	@echo "LINT: Running code checks.."
 	./scripts/golinter.sh
 
 .PHONY: check-deps
-check-deps: gotools
+check-deps: gotool.dep
 	@echo "DEP: Checking for dependency issues.."
 	./scripts/check_deps.sh
 
 .PHONY: check-metrics-docs
-check-metrics-doc: gotools
+check-metrics-doc:
 	@echo "METRICS: Checking for outdated reference documentation.."
 	./scripts/metrics_doc.sh check
 
 .PHONY: generate-metrics-docs
-generate-metrics-doc: gotools
+generate-metrics-doc:
 	@echo "Generating metrics reference documentation..."
 	./scripts/metrics_doc.sh generate
 
 .PHONY: protos
-protos: gotools
+protos: gotool.protoc-gen-go
 	@echo "Compiling non-API protos..."
 	./scripts/compile_protos.sh
 
