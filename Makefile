@@ -43,7 +43,7 @@
 #   - help-docs - generate the command reference docs
 
 ALPINE_VER ?= 3.11
-BASE_VERSION = 2.1.0
+BASE_VERSION = 2.2.0
 
 # 3rd party image version
 # These versions are also set in the runners in ./integration/runners/
@@ -135,11 +135,11 @@ check-go-version:
 	@scripts/check_go_version.sh $(GO_VER)
 
 .PHONY: integration-test
-integration-test: gotool.ginkgo ccenv-docker baseos-docker docker-thirdparty
+integration-test: gotool.ginkgo baseos-docker ccenv-docker docker-thirdparty
 	./scripts/run-integration-tests.sh
 
 .PHONY: unit-test
-unit-test: unit-test-clean docker-thirdparty ccenv-docker baseos-docker
+unit-test: unit-test-clean docker-thirdparty-couchdb
 	./scripts/run-unit-tests.sh
 
 .PHONY: unit-tests
@@ -149,11 +149,14 @@ unit-tests: unit-test
 # Also pull ccenv-1.4 for compatibility test to ensure pre-2.0 installed chaincodes
 # can be built by a peer configured to use the ccenv-1.4 as the builder image.
 .PHONY: docker-thirdparty
-docker-thirdparty:
-	docker pull couchdb:${COUCHDB_VER}
+docker-thirdparty: docker-thirdparty-couchdb
 	docker pull confluentinc/cp-zookeeper:${ZOOKEEPER_VER}
 	docker pull confluentinc/cp-kafka:${KAFKA_VER}
 	docker pull hyperledger/fabric-ccenv:1.4
+
+.PHONY: docker-thirdparty-couchdb
+docker-thirdparty-couchdb:
+	docker pull couchdb:${COUCHDB_VER}
 
 .PHONY: verify
 verify: export JOB_TYPE=VERIFY
@@ -169,7 +172,7 @@ linter: check-deps gotool.goimports
 	./scripts/golinter.sh
 
 .PHONY: check-deps
-check-deps: gotool.dep
+check-deps:
 	@echo "DEP: Checking for dependency issues.."
 	./scripts/check_deps.sh
 
