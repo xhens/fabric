@@ -4,49 +4,127 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package valimpl
+package validation
 
 import (
 	"bytes"
-	"fmt"
 
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/ledger/rwset"
 	"github.com/hyperledger/fabric-protos-go/peer"
+	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/txmgr"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/validator"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/validator/internal"
 	"github.com/hyperledger/fabric/core/ledger/util"
 	"github.com/hyperledger/fabric/internal/pkg/txflags"
 	"github.com/hyperledger/fabric/protoutil"
+	"github.com/pkg/errors"
 )
+
+var logger = flogging.MustGetLogger("validation")
+
+// CommitBatchPreparer performs validation and prepares the final batch that is to be committed to the statedb
+type CommitBatchPreparer struct {
+	txmgr              txmgr.TxMgr
+	db                 privacyenabledstate.DB
+	validator          *validator
+	customTxProcessors map[common.HeaderType]ledger.CustomTxProcessor
+}
+
+// NewCommitBatchPreparer constructs a validator that internally manages statebased validator and in addition
+// handles the tasks that are agnostic to a particular validation scheme such as parsing the block and handling the pvt data
+func NewCommitBatchPreparer(
+	txmgr txmgr.TxMgr,
+	db privacyenabledstate.DB,
+	customTxProcessors map[common.HeaderType]ledger.CustomTxProcessor,
+	hasher ledger.Hasher,
+) *CommitBatchPreparer {
+	return &CommitBatchPreparer{
+		txmgr,
+		db,
+		&validator{
+			db:     db,
+			hasher: hasher,
+		},
+		customTxProcessors,
+	}
+}
+
+// ValidateAndPrepareBatch performs validation of transactions in the block and prepares the batch of final writes
+func (p *CommitBatchPreparer) ValidateAndPrepareBatch(blockAndPvtdata *ledger.BlockAndPvtData,
+	doMVCCValidation bool) (*privacyenabledstate.UpdateBatch, []*txmgr.TxStatInfo, error) {
+	blk := blockAndPvtdata.Block
+	logger.Debugf("ValidateAndPrepareBatch() for block number = [%d]", blk.Header.Number)
+	var internalBlock *block
+	var txsStatInfo []*txmgr.TxStatInfo
+	var pubAndHashUpdates *publicAndHashUpdates
+	var pvtUpdates *privacyenabledstate.PvtUpdateBatch
+	var err error
+
+	logger.Debug("preprocessing ProtoBlock...")
+	if internalBlock, txsStatInfo, err = preprocessProtoBlock(
+		p.txmgr,
+		p.db.ValidateKeyValue,
+		blk,
+		doMVCCValidation,
+		p.customTxProcessors,
+	); err != nil {
+		return nil, nil, err
+	}
+
+	if pubAndHashUpdates, err = p.validator.validateAndPrepareBatch(internalBlock, doMVCCValidation); err != nil {
+		return nil, nil, err
+	}
+	logger.Debug("validating rwset...")
+	if pvtUpdates, err = validateAndPreparePvtBatch(
+		internalBlock,
+		p.db,
+		pubAndHashUpdates,
+		blockAndPvtdata.PvtData,
+		p.customTxProcessors,
+	); err != nil {
+		return nil, nil, err
+	}
+	logger.Debug("postprocessing ProtoBlock...")
+	postprocessProtoBlock(blk, internalBlock)
+	logger.Debug("ValidateAndPrepareBatch() complete")
+
+	txsFilter := txflags.ValidationFlags(blk.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+	for i := range txsFilter {
+		txsStatInfo[i].ValidationCode = txsFilter.Flag(i)
+	}
+	return &privacyenabledstate.UpdateBatch{
+		PubUpdates:  pubAndHashUpdates.publicUpdates,
+		HashUpdates: pubAndHashUpdates.hashUpdates,
+		PvtUpdates:  pvtUpdates,
+	}, txsStatInfo, nil
+}
 
 // validateAndPreparePvtBatch pulls out the private write-set for the transactions that are marked as valid
 // by the internal public data validator. Finally, it validates (if not already self-endorsed) the pvt rwset against the
 // corresponding hash present in the public rwset
 func validateAndPreparePvtBatch(
-	block *internal.Block,
+	blk *block,
 	db privacyenabledstate.DB,
-	pubAndHashUpdates *internal.PubAndHashUpdates,
+	pubAndHashUpdates *publicAndHashUpdates,
 	pvtdata map[uint64]*ledger.TxPvtData,
 	customTxProcessors map[common.HeaderType]ledger.CustomTxProcessor,
 ) (*privacyenabledstate.PvtUpdateBatch, error) {
 
 	pvtUpdates := privacyenabledstate.NewPvtUpdateBatch()
 	metadataUpdates := metadataUpdates{}
-	for _, tx := range block.Txs {
-		if tx.ValidationCode != peer.TxValidationCode_VALID {
+	for _, tx := range blk.txs {
+		if tx.validationCode != peer.TxValidationCode_VALID {
 			continue
 		}
-		if !tx.ContainsPvtWrites() {
+		if !tx.containsPvtWrites() {
 			continue
 		}
-		txPvtdata := pvtdata[uint64(tx.IndexInBlock)]
+		txPvtdata := pvtdata[uint64(tx.indexInBlock)]
 		if txPvtdata == nil {
 			continue
 		}
@@ -60,7 +138,7 @@ func validateAndPreparePvtBatch(
 		if pvtRWSet, err = rwsetutil.TxPvtRwSetFromProtoMsg(txPvtdata.WriteSet); err != nil {
 			return nil, err
 		}
-		addPvtRWSetToPvtUpdateBatch(pvtRWSet, pvtUpdates, version.NewHeight(block.Num, uint64(tx.IndexInBlock)))
+		addPvtRWSetToPvtUpdateBatch(pvtRWSet, pvtUpdates, version.NewHeight(blk.num, uint64(tx.indexInBlock)))
 		addEntriesToMetadataUpdates(metadataUpdates, pvtRWSet)
 	}
 	if err := incrementPvtdataVersionIfNeeded(metadataUpdates, pvtUpdates, pubAndHashUpdates, db); err != nil {
@@ -79,7 +157,7 @@ func requiresPvtdataValidation(tx *ledger.TxPvtData) bool {
 
 // validPvtdata returns true if hashes of all the collections writeset present in the pvt data
 // match with the corresponding hashes present in the public read-write set
-func validatePvtdata(tx *internal.Transaction, pvtdata *ledger.TxPvtData) error {
+func validatePvtdata(tx *transaction, pvtdata *ledger.TxPvtData) error {
 	if pvtdata.WriteSet == nil {
 		return nil
 	}
@@ -87,12 +165,10 @@ func validatePvtdata(tx *internal.Transaction, pvtdata *ledger.TxPvtData) error 
 	for _, nsPvtdata := range pvtdata.WriteSet.NsPvtRwset {
 		for _, collPvtdata := range nsPvtdata.CollectionPvtRwset {
 			collPvtdataHash := util.ComputeHash(collPvtdata.Rwset)
-			hashInPubdata := tx.RetrieveHash(nsPvtdata.Namespace, collPvtdata.CollectionName)
+			hashInPubdata := tx.retrieveHash(nsPvtdata.Namespace, collPvtdata.CollectionName)
 			if !bytes.Equal(collPvtdataHash, hashInPubdata) {
-				return &validator.ErrPvtdataHashMissmatch{
-					Msg: fmt.Sprintf(`Hash of pvt data for collection [%s:%s] does not match with the corresponding hash in the public data.
-					public hash = [%#v], pvt data hash = [%#v]`, nsPvtdata.Namespace, collPvtdata.CollectionName, hashInPubdata, collPvtdataHash),
-				}
+				return errors.Errorf(`hash of pvt data for collection [%s:%s] does not match with the corresponding hash in the public data. public hash = [%#v], pvt data hash = [%#v]`,
+					nsPvtdata.Namespace, collPvtdata.CollectionName, hashInPubdata, collPvtdataHash)
 			}
 		}
 	}
@@ -103,14 +179,14 @@ func validatePvtdata(tx *internal.Transaction, pvtdata *ledger.TxPvtData) error 
 // The returned 'Block' structure contains only transactions that are endorser transactions and are not already marked as invalid
 func preprocessProtoBlock(txMgr txmgr.TxMgr,
 	validateKVFunc func(key string, value []byte) error,
-	block *common.Block, doMVCCValidation bool,
+	blk *common.Block, doMVCCValidation bool,
 	customTxProcessors map[common.HeaderType]ledger.CustomTxProcessor,
-) (*internal.Block, []*txmgr.TxStatInfo, error) {
-	b := &internal.Block{Num: block.Header.Number}
+) (*block, []*txmgr.TxStatInfo, error) {
+	b := &block{num: blk.Header.Number}
 	txsStatInfo := []*txmgr.TxStatInfo{}
 	// Committer validator has already set validation flags based on well formed tran checks
-	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
-	for txIndex, envBytes := range block.Data.Data {
+	txsFilter := txflags.ValidationFlags(blk.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+	for txIndex, envBytes := range blk.Data.Data {
 		var env *common.Envelope
 		var chdr *common.ChannelHeader
 		var payload *common.Payload
@@ -126,7 +202,7 @@ func preprocessProtoBlock(txMgr txmgr.TxMgr,
 			// Skipping invalid transaction
 			logger.Warningf("Channel [%s]: Block [%d] Transaction index [%d] TxId [%s]"+
 				" marked as invalid by committer. Reason code [%s]",
-				chdr.GetChannelId(), block.Header.Number, txIndex, chdr.GetTxId(),
+				chdr.GetChannelId(), blk.Header.Number, txIndex, chdr.GetTxId(),
 				txsFilter.Flag(txIndex).String())
 			continue
 		}
@@ -173,15 +249,15 @@ func preprocessProtoBlock(txMgr txmgr.TxMgr,
 			if err := validateWriteset(txRWSet, validateKVFunc); err != nil {
 				logger.Warningf("Channel [%s]: Block [%d] Transaction index [%d] TxId [%s]"+
 					" marked as invalid. Reason code [%s]",
-					chdr.GetChannelId(), block.Header.Number, txIndex, chdr.GetTxId(), peer.TxValidationCode_INVALID_WRITESET)
+					chdr.GetChannelId(), blk.Header.Number, txIndex, chdr.GetTxId(), peer.TxValidationCode_INVALID_WRITESET)
 				txsFilter.SetFlag(txIndex, peer.TxValidationCode_INVALID_WRITESET)
 				continue
 			}
-			b.Txs = append(b.Txs, &internal.Transaction{
-				IndexInBlock:            txIndex,
-				ID:                      chdr.TxId,
-				RWSet:                   txRWSet,
-				ContainsPostOrderWrites: containsPostOrderWrites,
+			b.txs = append(b.txs, &transaction{
+				indexInBlock:            txIndex,
+				id:                      chdr.TxId,
+				rwset:                   txRWSet,
+				containsPostOrderWrites: containsPostOrderWrites,
 			})
 		}
 	}
@@ -235,12 +311,12 @@ func validateWriteset(txRWSet *rwsetutil.TxRwSet, validateKVFunc func(key string
 }
 
 // postprocessProtoBlock updates the proto block's validation flags (in metadata) by the results of validation process
-func postprocessProtoBlock(block *common.Block, validatedBlock *internal.Block) {
-	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
-	for _, tx := range validatedBlock.Txs {
-		txsFilter.SetFlag(tx.IndexInBlock, tx.ValidationCode)
+func postprocessProtoBlock(blk *common.Block, validatedBlock *block) {
+	txsFilter := txflags.ValidationFlags(blk.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+	for _, tx := range validatedBlock.txs {
+		txsFilter.SetFlag(tx.indexInBlock, tx.validationCode)
 	}
-	block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
+	blk.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
 }
 
 func addPvtRWSetToPvtUpdateBatch(pvtRWSet *rwsetutil.TxPvtRwSet, pvtUpdateBatch *privacyenabledstate.PvtUpdateBatch, ver *version.Height) {
@@ -265,13 +341,13 @@ func addPvtRWSetToPvtUpdateBatch(pvtRWSet *rwsetutil.TxPvtRwSet, pvtUpdateBatch 
 func incrementPvtdataVersionIfNeeded(
 	metadataUpdates metadataUpdates,
 	pvtUpdateBatch *privacyenabledstate.PvtUpdateBatch,
-	pubAndHashUpdates *internal.PubAndHashUpdates,
+	pubAndHashUpdates *publicAndHashUpdates,
 	db privacyenabledstate.DB) error {
 
 	for collKey := range metadataUpdates {
 		ns, coll, key := collKey.ns, collKey.coll, collKey.key
 		keyHash := util.ComputeStringHash(key)
-		hashedVal := pubAndHashUpdates.HashUpdates.Get(ns, coll, string(keyHash))
+		hashedVal := pubAndHashUpdates.hashUpdates.Get(ns, coll, string(keyHash))
 		if hashedVal == nil {
 			// This key is finally not getting updated in the hashed space by this block -
 			// either the metadata update was on a non-existing key or the key gets deleted by a latter transaction in the block
