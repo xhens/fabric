@@ -4,14 +4,12 @@ Copyright IBM Corp. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 
-package internal
+package validation
 
 import (
-	"os"
 	"testing"
 
 	"github.com/hyperledger/fabric-protos-go/ledger/rwset/kvrwset"
-	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
@@ -19,11 +17,6 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/util"
 	"github.com/stretchr/testify/assert"
 )
-
-func TestMain(m *testing.M) {
-	flogging.ActivateSpec("valinternal=debug")
-	os.Exit(m.Run())
-}
 
 func TestTxOps(t *testing.T) {
 	assert := assert.New(t)
@@ -73,7 +66,7 @@ func TestTxOpsPreparationValueUpdate(t *testing.T) {
 		version.NewHeight(1, 2))
 
 	db.ApplyPrivacyAwareUpdates(updateBatch, version.NewHeight(1, 2)) //write the above initial state to db
-	precedingUpdates := NewPubAndHashUpdates()
+	precedingUpdates := newPubAndHashUpdates()
 
 	rwset := testutilBuildRwset( // A sample rwset {upsert key1, key2, key3}
 		t,
@@ -130,7 +123,7 @@ func TestTxOpsPreparationMetadataUpdates(t *testing.T) {
 		version.NewHeight(1, 2))
 
 	db.ApplyPrivacyAwareUpdates(updateBatch, version.NewHeight(1, 2)) //write the above initial state to db
-	precedingUpdates := NewPubAndHashUpdates()
+	precedingUpdates := newPubAndHashUpdates()
 
 	rwset := testutilBuildRwset( // A sample rwset {update metadta for the three keys}
 		t,
@@ -182,7 +175,7 @@ func TestTxOpsPreparationMetadataDelete(t *testing.T) {
 		version.NewHeight(1, 2))
 
 	db.ApplyPrivacyAwareUpdates(updateBatch, version.NewHeight(1, 2)) //write the above initial state to db
-	precedingUpdates := NewPubAndHashUpdates()
+	precedingUpdates := newPubAndHashUpdates()
 
 	rwset := testutilBuildRwset( // A sample rwset {delete metadata for the three keys}
 		t,
@@ -240,7 +233,7 @@ func TestTxOpsPreparationMixedUpdates(t *testing.T) {
 
 	db.ApplyPrivacyAwareUpdates(updateBatch, version.NewHeight(1, 2)) //write the above initial state to db
 
-	precedingUpdates := NewPubAndHashUpdates()
+	precedingUpdates := newPubAndHashUpdates()
 
 	rwset := testutilBuildRwset( // A sample rwset {key1:only value update, key2: value and metadata update, key3: only metadata update, key4: only value update}
 		t,
@@ -328,7 +321,7 @@ func TestTxOpsPreparationPvtdataHashes(t *testing.T) {
 
 	db.ApplyPrivacyAwareUpdates(updateBatch, version.NewHeight(1, 2)) //write the above initial state to db
 
-	precedingUpdates := NewPubAndHashUpdates()
+	precedingUpdates := newPubAndHashUpdates()
 	rwset := testutilBuildRwset( // A sample rwset {key1:only value update, key2: value and metadata update, key3: only metadata update, key4: only value update}
 		t,
 		map[compositeKey][]byte{
