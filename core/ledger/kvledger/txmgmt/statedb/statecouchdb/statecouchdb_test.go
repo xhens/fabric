@@ -115,7 +115,8 @@ func (env *testCouchDBEnv) stopCouchDB() {
 }
 
 func (env *testCouchDBEnv) cleanup(config *ledger.CouchDBConfig) {
-	DeleteApplicationDBs(env.t, config)
+	err := DropApplicationDBs(config)
+	require.NoError(env.t, err)
 }
 
 // we create two CouchDB instances/containers---one is used to test the
@@ -1068,18 +1069,18 @@ func assertQueryResults(t *testing.T, results []*queryResult, expectedIds []stri
 
 func TestFormatCheck(t *testing.T) {
 	testCases := []struct {
-		dataFormat     string                         // precondition
-		dataExists     bool                           // precondition
-		expectedFormat string                         // postcondition
-		expectedErr    *dataformat.ErrVersionMismatch // postcondition
+		dataFormat     string                        // precondition
+		dataExists     bool                          // precondition
+		expectedFormat string                        // postcondition
+		expectedErr    *dataformat.ErrFormatMismatch // postcondition
 	}{
 		{
 			dataFormat: "",
 			dataExists: true,
-			expectedErr: &dataformat.ErrVersionMismatch{
-				DBInfo:          "CouchDB for state database",
-				Version:         "",
-				ExpectedVersion: "2.0",
+			expectedErr: &dataformat.ErrFormatMismatch{
+				DBInfo:         "CouchDB for state database",
+				Format:         "",
+				ExpectedFormat: "2.0",
 			},
 			expectedFormat: "does not matter as the test should not reach to check this",
 		},
@@ -1088,30 +1089,30 @@ func TestFormatCheck(t *testing.T) {
 			dataFormat:     "",
 			dataExists:     false,
 			expectedErr:    nil,
-			expectedFormat: dataformat.Version20,
+			expectedFormat: dataformat.CurrentFormat,
 		},
 
 		{
-			dataFormat:     dataformat.Version20,
+			dataFormat:     dataformat.CurrentFormat,
 			dataExists:     false,
-			expectedFormat: dataformat.Version20,
+			expectedFormat: dataformat.CurrentFormat,
 			expectedErr:    nil,
 		},
 
 		{
-			dataFormat:     dataformat.Version20,
+			dataFormat:     dataformat.CurrentFormat,
 			dataExists:     true,
-			expectedFormat: dataformat.Version20,
+			expectedFormat: dataformat.CurrentFormat,
 			expectedErr:    nil,
 		},
 
 		{
 			dataFormat: "3.0",
 			dataExists: true,
-			expectedErr: &dataformat.ErrVersionMismatch{
-				DBInfo:          "CouchDB for state database",
-				Version:         "3.0",
-				ExpectedVersion: dataformat.Version20,
+			expectedErr: &dataformat.ErrFormatMismatch{
+				DBInfo:         "CouchDB for state database",
+				Format:         "3.0",
+				ExpectedFormat: dataformat.CurrentFormat,
 			},
 			expectedFormat: "does not matter as the test should not reach to check this",
 		},
@@ -1127,7 +1128,7 @@ func TestFormatCheck(t *testing.T) {
 	}
 }
 
-func testFormatCheck(t *testing.T, dataFormat string, dataExists bool, expectedErr *dataformat.ErrVersionMismatch, expectedFormat string, vdbEnv *testVDBEnv) {
+func testFormatCheck(t *testing.T, dataFormat string, dataExists bool, expectedErr *dataformat.ErrFormatMismatch, expectedFormat string, vdbEnv *testVDBEnv) {
 	redoPath, err := ioutil.TempDir("", "redoPath")
 	require.NoError(t, err)
 	defer os.RemoveAll(redoPath)
@@ -1150,12 +1151,16 @@ func testFormatCheck(t *testing.T, dataFormat string, dataExists bool, expectedE
 		require.NoError(t, db.ApplyUpdates(batch, version.NewHeight(1, 1)))
 	}
 	if dataFormat == "" {
-		dropDB(t, dbProvider.couchInstance, fabricInternalDBName)
+		response, err := dropDB(dbProvider.couchInstance, fabricInternalDBName)
+		require.NoError(t, err)
+		require.True(t, response.Ok)
 	} else {
 		require.NoError(t, writeDataFormatVersion(dbProvider.couchInstance, dataFormat))
 	}
 	dbProvider.Close()
-	defer DeleteApplicationDBs(t, vdbEnv.config)
+	defer func() {
+		require.NoError(t, DropApplicationDBs(vdbEnv.config))
+	}()
 
 	// close and reopen with preconditions set and check the expected behavior
 	dbProvider, err = NewVersionedDBProvider(config, &disabled.Provider{}, nil)
