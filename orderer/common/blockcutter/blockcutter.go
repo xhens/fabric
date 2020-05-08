@@ -77,7 +77,7 @@ func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, p
 		logger.Panicf("Could not retrieve orderer config to query batch parameters, block cutting is not possible")
 	}
 
-	batchSize := ordererConfig.BatchSize()
+	batchSize := ordererConfig.BatchSize() // TODO: replace the static with a dynamic version (batch, block size)
 
 	messageSizeBytes := messageSizeBytes(msg)
 	if messageSizeBytes > batchSize.PreferredMaxBytes {
