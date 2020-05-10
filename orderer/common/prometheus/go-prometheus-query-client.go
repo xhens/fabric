@@ -15,23 +15,6 @@ var baseUrl = "http://localhost:9090"
 var SINGLE = "/api/v1/query"
 var RANGE = "/api/v1/query_range"
 
-func getPrometheusData() string {
-
-	var resp, err = http.Get(baseUrl + SINGLE + "ledger_blockchain_height")
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	// get data from the response body
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	return string(body)
-}
-
 func retrieveTargetParameters(queryType string, query string) *url.URL {
 	base, _ := url.Parse(baseUrl) // domain = localhost:9090
 	relativeUrl, _ := url.Parse(queryType) // api/v1/query or api/v1/query_range
@@ -56,7 +39,7 @@ func query(queryString string, timePoint int64) interface{} {
 	return retrievedResponse
 }
 
-func rangeQuery(queryString string, startTime int64, endTime int64, step int) *url.URL {
+func rangeQuery(queryString string, startTime int64, endTime int64, step int) interface{} {
 	// url.Values will map values by sorting keys alphabetically
 	qsParams := url.Values{}
 	qsParams.Set("query", queryString)
@@ -64,7 +47,9 @@ func rangeQuery(queryString string, startTime int64, endTime int64, step int) *u
 	qsParams.Set("end", strconv.FormatInt(endTime, 10))
 	qsParams.Set("step", strconv.Itoa(step))
 	encodedQueryStringParams := qsParams.Encode()
-	return retrieveTargetParameters(RANGE, encodedQueryStringParams)
+	targetParams := retrieveTargetParameters(RANGE, encodedQueryStringParams)
+	retrievedResponse := retrieveResponse(targetParams)
+	return retrievedResponse
 }
 
 func doRequest(url string) []byte {
@@ -99,10 +84,7 @@ func retrieveResponse(url *url.URL) interface{} {
 	return nil
 }
 
-
-func readPrometheusData() {
-	// data := getPrometheusData()
-	// fmt.Println(data)
+func Main() {
 	timeNow := time.Now()
 	endTimeUnix := timeNow.Unix()
 	startTimeUnix := timeNow.Add(-time.Minute * 30).Unix() // 30 minutes earlier
