@@ -26,3 +26,4 @@ TESTS*.xml
 .vagrant/
 .vscode
 /orderer/orderer
+node_modules

@@ -1,6 +1,7 @@
 package prometheus
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -45,12 +46,14 @@ func retrieveTargetParameters(queryType string, query string) *url.URL {
 	return fullUrl
 }
 
-func query(queryString string, timePoint int64) *url.URL {
+func query(queryString string, timePoint int64) interface{} {
 	queryStringParams := url.Values{}
 	queryStringParams.Set("query", queryString)
 	queryStringParams.Set("time", strconv.FormatInt(timePoint, 10))
 	encodedQueryStringParams := queryStringParams.Encode()
-	return retrieveTargetParameters(SINGLE, encodedQueryStringParams)
+	targetParams := retrieveTargetParameters(SINGLE, encodedQueryStringParams)
+	retrievedResponse := retrieveResponse(targetParams)
+	return retrievedResponse
 }
 
 func rangeQuery(queryString string, startTime int64, endTime int64, step int) *url.URL {
@@ -62,6 +65,38 @@ func rangeQuery(queryString string, startTime int64, endTime int64, step int) *u
 	qsParams.Set("step", strconv.Itoa(step))
 	encodedQueryStringParams := qsParams.Encode()
 	return retrieveTargetParameters(RANGE, encodedQueryStringParams)
+}
+
+func doRequest(url string) []byte {
+	method := "GET"
+	client := &http.Client{}
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		log.Fatalf("Error %s ", err)
+	}
+	res, _ := client.Do(req)
+	defer res.Body.Close()
+	body, _ := ioutil.ReadAll(res.Body)
+	return body
+}
+
+func retrieveResponse(url *url.URL) interface{} {
+	response := doRequest(url.String())
+	var data interface{}  // generic JSON with interface{}
+	_ = json.Unmarshal(response, &data)
+	result := data.(map[string]interface{})
+	for key, value := range result {
+		if key == "status" && value == "success" {
+			log.Println(value)
+		} else if key == "data" {
+			fmt.Println(value)
+			return value
+		} else {
+			log.Fatalf("Prometheus query to %s failed with %s", value, response)
+			return nil
+		}
+	}
+	return nil
 }
 
 
