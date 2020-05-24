@@ -8,6 +8,7 @@ package ledger
 
 import (
 	"fmt"
+	"hash"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -31,7 +32,7 @@ type Initializer struct {
 	HealthCheckRegistry             HealthCheckRegistry
 	Config                          *Config
 	CustomTxProcessors              map[common.HeaderType]CustomTxProcessor
-	Hasher                          Hasher
+	HashProvider                    HashProvider
 }
 
 // Config is a structure used to configure a ledger provider.
@@ -639,7 +640,7 @@ type HealthCheckRegistry interface {
 // to be able to listen to chaincode lifecycle events. 'dbArtifactsTar' represents db specific artifacts
 // (such as index specs) packaged in a tar. Note that this interface is redefined here (in addition to
 // the one defined in ledger/cceventmgmt package). Using the same interface for the new lifecycle path causes
-// a cyclic import dependency. Moreover, eventually the whole package ledger/cceventmgmt is intented to
+// a cyclic import dependency. Moreover, eventually the whole package ledger/cceventmgmt is intended to
 // be removed when migration to new lifecycle is mandated.
 type ChaincodeLifecycleEventListener interface {
 	// HandleChaincodeDeploy is invoked when chaincode installed + defined becomes true.
@@ -691,10 +692,10 @@ func (e *InvalidTxError) Error() string {
 	return e.Msg
 }
 
-// Hasher implements the hash function that should be used for all ledger components.
+// HashProvider provides access to a hash.Hash for ledger components.
 // Currently works at a stepping stone to decrease surface area of bccsp
-type Hasher interface {
-	Hash(msg []byte, opts bccsp.HashOpts) (hash []byte, err error)
+type HashProvider interface {
+	GetHash(opts bccsp.HashOpts) (hash.Hash, error)
 }
 
 //go:generate counterfeiter -o mock/state_listener.go -fake-name StateListener . StateListener

@@ -72,7 +72,7 @@ type lgrInitializer struct {
 	ccLifecycleEventProvider ledger.ChaincodeLifecycleEventProvider
 	stats                    *ledgerStats
 	customTxProcessors       map[common.HeaderType]ledger.CustomTxProcessor
-	hasher                   ledger.Hasher
+	hashProvider             ledger.HashProvider
 }
 
 func newKVLedger(initializer *lgrInitializer) (*kvLedger, error) {
@@ -88,6 +88,17 @@ func newKVLedger(initializer *lgrInitializer) (*kvLedger, error) {
 
 	btlPolicy := pvtdatapolicy.ConstructBTLPolicy(&collectionInfoRetriever{ledgerID, l, initializer.ccInfoProvider})
 
+	rwsetHashFunc := func(data []byte) ([]byte, error) {
+		hash, err := initializer.hashProvider.GetHash(rwsetHashOpts)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = hash.Write(data); err != nil {
+			return nil, err
+		}
+		return hash.Sum(nil), nil
+	}
+
 	txmgrInitializer := &lockbasedtxmgr.Initializer{
 		LedgerID:            ledgerID,
 		DB:                  initializer.stateDB,
@@ -96,9 +107,7 @@ func newKVLedger(initializer *lgrInitializer) (*kvLedger, error) {
 		BookkeepingProvider: initializer.bookkeeperProvider,
 		CCInfoProvider:      initializer.ccInfoProvider,
 		CustomTxProcessors:  initializer.customTxProcessors,
-		HashFunc: func(data []byte) (hashsum []byte, err error) {
-			return initializer.hasher.Hash(data, rwsetHashOpts)
-		},
+		HashFunc:            rwsetHashFunc,
 	}
 	if err := l.initTxMgr(txmgrInitializer); err != nil {
 		return nil, err
@@ -148,7 +157,7 @@ func (l *kvLedger) initTxMgr(initializer *lockbasedtxmgr.Initializer) error {
 	}
 	l.txtmgmt = txmgr
 	// This is a workaround for populating lifecycle cache.
-	// See comments on this function for deatils
+	// See comments on this function for details
 	qe, err := txmgr.NewQueryExecutorNoCollChecks()
 	if err != nil {
 		return err

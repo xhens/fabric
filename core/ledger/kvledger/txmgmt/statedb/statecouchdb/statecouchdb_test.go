@@ -681,10 +681,7 @@ func TestHandleChaincodeDeploy(t *testing.T) {
 	queryString = `{"selector":{"owner":"fred"}, "sort": [{"size": "desc"}]}`
 	queryUsingIndex := func() bool {
 		_, err = db.ExecuteQuery("ns1", queryString)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	}
 	assert.Eventually(t, queryUsingIndex, 2*time.Second, 100*time.Millisecond, "error executing query with sort")
 
@@ -743,20 +740,14 @@ func TestIndexDeploymentWithOrderAndBadSyntax(t *testing.T) {
 	queryString := `{"selector":{"owner":"fred"}, "sort": [{"docType": "desc"}]}`
 	queryUsingIndex := func() bool {
 		_, err = db.ExecuteQuery("ns1", queryString)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	}
 	assert.Eventually(t, queryUsingIndex, 2*time.Second, 100*time.Millisecond, "error executing query with sort")
 
 	queryString = `{"selector":{"owner":"fred"}, "sort": [{"size": "desc"}]}`
 	queryUsingIndex = func() bool {
 		_, err = db.ExecuteQuery("ns1", queryString)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	}
 	assert.Eventually(t, queryUsingIndex, 2*time.Second, 100*time.Millisecond, "error executing query with sort")
 
@@ -766,10 +757,7 @@ func TestIndexDeploymentWithOrderAndBadSyntax(t *testing.T) {
 	queryString = `{"selector":{"owner":"fred"}, "sort": [{"color": "desc"}]}`
 	queryUsingIndex = func() bool {
 		_, err = db.ExecuteQuery("ns1", queryString)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	}
 	assert.Never(t, queryUsingIndex, 2*time.Second, 100*time.Millisecond, "error should have occurred as there is no index on color field")
 }
@@ -1444,7 +1432,7 @@ func TestChannelMetadata_NegativeTests(t *testing.T) {
 
 	// call createCouchDatabase to simulate peer crashes after metadataDB is created but before channelMetadata is updated
 	// then call DBProvider.GetDBHandle and verify channelMetadata is correctly generated
-	channelName = "testchannelmetadata-simulatefailure-inbetween"
+	channelName = "testchannelmetadata-simulatefailure-in-between"
 	couchInstance, err := createCouchInstance(vdbEnv.config, &disabled.Provider{})
 	metadatadbName := constructMetadataDBName(channelName)
 	metadataDB, err := createCouchDatabase(couchInstance, metadatadbName)
