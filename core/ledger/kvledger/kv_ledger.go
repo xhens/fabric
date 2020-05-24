@@ -15,6 +15,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/peer"
+	"github.com/hyperledger/fabric/bccsp"
 	"github.com/hyperledger/fabric/common/flogging"
 	commonledger "github.com/hyperledger/fabric/common/ledger"
 	"github.com/hyperledger/fabric/common/ledger/blkstorage"
@@ -36,6 +37,10 @@ import (
 
 var logger = flogging.MustGetLogger("kvledger")
 
+var (
+	rwsetHashOpts = &bccsp.SHA256Opts{}
+)
+
 // kvLedger provides an implementation of `ledger.PeerLedger`.
 // This implementation provides a key-value based data model
 type kvLedger struct {
@@ -44,7 +49,7 @@ type kvLedger struct {
 	pvtdataStore           *pvtdatastorage.Store
 	txtmgmt                txmgr.TxMgr
 	historyDB              *history.DB
-	configHistoryRetriever ledger.ConfigHistoryRetriever
+	configHistoryRetriever *confighistory.Retriever
 	blockAPIsRWLock        *sync.RWMutex
 	stats                  *ledgerStats
 	commitHash             []byte
@@ -58,7 +63,7 @@ type lgrInitializer struct {
 	ledgerID                 string
 	blockStore               *blkstorage.BlockStore
 	pvtdataStore             *pvtdatastorage.Store
-	versionedDB              privacyenabledstate.DB
+	stateDB                  *privacyenabledstate.DB
 	historyDB                *history.DB
 	configHistoryMgr         confighistory.Mgr
 	stateListeners           []ledger.StateListener
@@ -67,7 +72,7 @@ type lgrInitializer struct {
 	ccLifecycleEventProvider ledger.ChaincodeLifecycleEventProvider
 	stats                    *ledgerStats
 	customTxProcessors       map[common.HeaderType]ledger.CustomTxProcessor
-	hasher                   ledger.Hasher
+	hashProvider             ledger.HashProvider
 }
 
 func newKVLedger(initializer *lgrInitializer) (*kvLedger, error) {
@@ -83,15 +88,26 @@ func newKVLedger(initializer *lgrInitializer) (*kvLedger, error) {
 
 	btlPolicy := pvtdatapolicy.ConstructBTLPolicy(&collectionInfoRetriever{ledgerID, l, initializer.ccInfoProvider})
 
+	rwsetHashFunc := func(data []byte) ([]byte, error) {
+		hash, err := initializer.hashProvider.GetHash(rwsetHashOpts)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = hash.Write(data); err != nil {
+			return nil, err
+		}
+		return hash.Sum(nil), nil
+	}
+
 	txmgrInitializer := &lockbasedtxmgr.Initializer{
 		LedgerID:            ledgerID,
-		DB:                  initializer.versionedDB,
+		DB:                  initializer.stateDB,
 		StateListeners:      initializer.stateListeners,
 		BtlPolicy:           btlPolicy,
 		BookkeepingProvider: initializer.bookkeeperProvider,
 		CCInfoProvider:      initializer.ccInfoProvider,
 		CustomTxProcessors:  initializer.customTxProcessors,
-		Hasher:              initializer.hasher,
+		HashFunc:            rwsetHashFunc,
 	}
 	if err := l.initTxMgr(txmgrInitializer); err != nil {
 		return nil, err
@@ -116,7 +132,7 @@ func newKVLedger(initializer *lgrInitializer) (*kvLedger, error) {
 	// TODO Move the function `GetChaincodeEventListener` to ledger interface and
 	// this functionality of registering for events to ledgermgmt package so that this
 	// is reused across other future ledger implementations
-	ccEventListener := initializer.versionedDB.GetChaincodeEventListener()
+	ccEventListener := initializer.stateDB.GetChaincodeEventListener()
 	logger.Debugf("Register state db for chaincode lifecycle events: %t", ccEventListener != nil)
 	if ccEventListener != nil {
 		cceventmgmt.GetMgr().Register(ledgerID, ccEventListener)
@@ -141,7 +157,7 @@ func (l *kvLedger) initTxMgr(initializer *lockbasedtxmgr.Initializer) error {
 	}
 	l.txtmgmt = txmgr
 	// This is a workaround for populating lifecycle cache.
-	// See comments on this function for deatils
+	// See comments on this function for details
 	qe, err := txmgr.NewQueryExecutorNoCollChecks()
 	if err != nil {
 		return err

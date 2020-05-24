@@ -65,7 +65,7 @@ type Provider struct {
 	idStore              *idStore
 	blkStoreProvider     *blkstorage.BlockStoreProvider
 	pvtdataStoreProvider *pvtdatastorage.Provider
-	vdbProvider          privacyenabledstate.DBProvider
+	dbProvider           *privacyenabledstate.DBProvider
 	historydbProvider    *history.DBProvider
 	configHistoryMgr     confighistory.Mgr
 	stateListeners       []ledger.StateListener
@@ -74,15 +74,15 @@ type Provider struct {
 	collElgNotifier      *collElgNotifier
 	stats                *stats
 	fileLock             *leveldbhelper.FileLock
-	hasher               ledger.Hasher
+	hashProvider         ledger.HashProvider
 }
 
 // NewProvider instantiates a new Provider.
 // This is not thread-safe and assumed to be synchronized by the caller
 func NewProvider(initializer *ledger.Initializer) (pr *Provider, e error) {
 	p := &Provider{
-		initializer: initializer,
-		hasher:      initializer.Hasher,
+		initializer:  initializer,
+		hashProvider: initializer.HashProvider,
 	}
 
 	defer func() {
@@ -238,7 +238,7 @@ func (p *Provider) initStateDBProvider() error {
 		LevelDBPath:   StateDBPath(p.initializer.Config.RootFSPath),
 	}
 	sysNamespaces := p.initializer.DeployedChaincodeInfoProvider.Namespaces()
-	p.vdbProvider, err = privacyenabledstate.NewCommonStorageDBProvider(
+	p.dbProvider, err = privacyenabledstate.NewDBProvider(
 		p.bookkeepingProvider,
 		p.initializer.MetricsProvider,
 		p.initializer.HealthCheckRegistry,
@@ -319,7 +319,7 @@ func (p *Provider) open(ledgerID string) (ledger.PeerLedger, error) {
 	p.collElgNotifier.registerListener(ledgerID, pvtdataStore)
 
 	// Get the versioned database (state database) for a chain/ledger
-	vDB, err := p.vdbProvider.GetDBHandle(ledgerID)
+	db, err := p.dbProvider.GetDBHandle(ledgerID)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +337,7 @@ func (p *Provider) open(ledgerID string) (ledger.PeerLedger, error) {
 		ledgerID:                 ledgerID,
 		blockStore:               blockStore,
 		pvtdataStore:             pvtdataStore,
-		versionedDB:              vDB,
+		stateDB:                  db,
 		historyDB:                historyDB,
 		configHistoryMgr:         p.configHistoryMgr,
 		stateListeners:           p.stateListeners,
@@ -346,7 +346,7 @@ func (p *Provider) open(ledgerID string) (ledger.PeerLedger, error) {
 		ccLifecycleEventProvider: p.initializer.ChaincodeLifecycleEventProvider,
 		stats:                    p.stats.ledgerStats(ledgerID),
 		customTxProcessors:       p.initializer.CustomTxProcessors,
-		hasher:                   p.hasher,
+		hashProvider:             p.hashProvider,
 	}
 
 	l, err := newKVLedger(initializer)
@@ -377,8 +377,8 @@ func (p *Provider) Close() {
 	if p.pvtdataStoreProvider != nil {
 		p.pvtdataStoreProvider.Close()
 	}
-	if p.vdbProvider != nil {
-		p.vdbProvider.Close()
+	if p.dbProvider != nil {
+		p.dbProvider.Close()
 	}
 	if p.bookkeepingProvider != nil {
 		p.bookkeepingProvider.Close()
@@ -428,7 +428,6 @@ func (p *Provider) recoverUnderConstructionLedger() {
 			"data inconsistency: under construction flag is set for ledger [%s] while the height of the blockchain is [%d]",
 			ledgerID, bcInfo.Height))
 	}
-	return
 }
 
 // runCleanup cleans up blockstorage, statedb, and historydb for what
@@ -509,7 +508,7 @@ func (s *idStore) checkUpgradeEligibility() (bool, error) {
 		return false, err
 	}
 	if emptydb {
-		logger.Warnf("Ledger database %s is empty, nothing to upgrade.", s.dbPath)
+		logger.Warnf("Ledger database %s is empty, nothing to upgrade", s.dbPath)
 		return false, nil
 	}
 	format, err := s.db.Get(formatKey)
@@ -517,7 +516,7 @@ func (s *idStore) checkUpgradeEligibility() (bool, error) {
 		return false, err
 	}
 	if bytes.Equal(format, []byte(dataformat.CurrentFormat)) {
-		logger.Info("Ledger data format is current, nothing to upgrade.")
+		logger.Debugf("Ledger database %s has current data format, nothing to upgrade", s.dbPath)
 		return false, nil
 	}
 	if !bytes.Equal(format, []byte(dataformat.PreviousFormat)) {

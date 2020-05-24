@@ -100,11 +100,6 @@ type docMetadata struct {
 	AttachmentsInfo map[string]*attachmentInfo `json:"_attachments"`
 }
 
-//docID is a minimal structure for capturing the ID from a query result
-type docID struct {
-	ID string `json:"_id"`
-}
-
 //queryResult is used for returning query results from CouchDB
 type queryResult struct {
 	id          string
@@ -521,20 +516,17 @@ func (dbclient *couchDatabase) dropDatabase() (*dbOperationResponse, error) {
 		return nil, errors.Wrap(decodeErr, "error decoding response body")
 	}
 
-	if dbResponse.Ok == true {
+	if dbResponse.Ok {
 		logger.Debugf("[%s] Dropped database", dbclient.dbName)
 	}
 
 	logger.Debugf("[%s] Exiting DropDatabase()", dbclient.dbName)
 
-	if dbResponse.Ok == true {
-
+	if dbResponse.Ok {
 		return dbResponse, nil
-
 	}
 
 	return dbResponse, errors.New("error dropping database")
-
 }
 
 // ensureFullCommit calls _ensure_full_commit for explicit fsync
@@ -578,10 +570,8 @@ func (dbclient *couchDatabase) ensureFullCommit() (*dbOperationResponse, error) 
 
 	logger.Debugf("[%s] Exiting EnsureFullCommit()", dbclient.dbName)
 
-	if dbResponse.Ok == true {
-
+	if dbResponse.Ok {
 		return dbResponse, nil
-
 	}
 
 	return dbResponse, errors.New("error syncing database")
@@ -616,7 +606,7 @@ func (dbclient *couchDatabase) saveDoc(id string, rev string, couchDoc *couchDoc
 	if couchDoc.attachments == nil {
 
 		//Test to see if this is a valid JSON
-		if isJSON(string(couchDoc.jsonValue)) != true {
+		if !isJSON(string(couchDoc.jsonValue)) {
 			return "", errors.New("JSON format is not valid")
 		}
 
@@ -1176,7 +1166,7 @@ func (dbclient *couchDatabase) listIndex() ([]*indexResult, error) {
 	}
 
 	dbName := dbclient.dbName
-	logger.Debug("[%s] Entering ListIndex()", dbName)
+	logger.Debugf("[%s] Entering ListIndex()", dbName)
 
 	indexURL, err := url.Parse(dbclient.couchInstance.url())
 	if err != nil {
@@ -1237,7 +1227,7 @@ func (dbclient *couchDatabase) createIndex(indexdefinition string) (*createIndex
 	logger.Debugf("[%s] Entering CreateIndex()  indexdefinition=%s", dbName, indexdefinition)
 
 	//Test to see if this is a valid JSON
-	if isJSON(indexdefinition) != true {
+	if !isJSON(indexdefinition) {
 		return nil, errors.New("JSON format is not valid")
 	}
 
@@ -1814,12 +1804,16 @@ func (couchInstance *couchInstance) handleRequest(ctx context.Context, method, d
 		// If the maxRetries is greater than 0, then log the retry info
 		if maxRetries > 0 {
 
+			retryMessage := fmt.Sprintf("Retrying couchdb request in %s", waitDuration)
+			if attempts == maxRetries {
+				retryMessage = "Retries exhausted"
+			}
+
 			//if this is an unexpected golang http error, log the error and retry
 			if errResp != nil {
 
 				//Log the error with the retry count and continue
-				logger.Warningf("Retrying couchdb request in %s. Attempt:%v  Error:%v",
-					waitDuration.String(), attempts+1, errResp.Error())
+				logger.Warningf("Attempt %d of %d returned error: %s. %s", attempts+1, maxRetries+1, errResp.Error(), retryMessage)
 
 				//otherwise this is an unexpected 500 error from CouchDB. Log the error and retry.
 			} else {
@@ -1838,12 +1832,14 @@ func (couchInstance *couchInstance) handleRequest(ctx context.Context, method, d
 				}
 
 				//Log the 500 error with the retry count and continue
-				logger.Warningf("Retrying couchdb request in %s. Attempt:%v  Couch DB Error:%s,  Status Code:%v  Reason:%v",
-					waitDuration.String(), attempts+1, couchDBReturn.Error, resp.Status, couchDBReturn.Reason)
+				logger.Warningf("Attempt %d of %d returned Couch DB Error:%s,  Status Code:%v  Reason:%s. %s",
+					attempts+1, maxRetries+1, couchDBReturn.Error, resp.Status, couchDBReturn.Reason, retryMessage)
 
 			}
-			//sleep for specified sleep time, then retry
-			time.Sleep(waitDuration)
+			//if there are more retries remaining, sleep for specified sleep time, then retry
+			if attempts < maxRetries {
+				time.Sleep(waitDuration)
+			}
 
 			//backoff, doubling the retry time for next attempt
 			waitDuration *= 2

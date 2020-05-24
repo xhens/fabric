@@ -681,10 +681,7 @@ func TestHandleChaincodeDeploy(t *testing.T) {
 	queryString = `{"selector":{"owner":"fred"}, "sort": [{"size": "desc"}]}`
 	queryUsingIndex := func() bool {
 		_, err = db.ExecuteQuery("ns1", queryString)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	}
 	assert.Eventually(t, queryUsingIndex, 2*time.Second, 100*time.Millisecond, "error executing query with sort")
 
@@ -743,20 +740,14 @@ func TestIndexDeploymentWithOrderAndBadSyntax(t *testing.T) {
 	queryString := `{"selector":{"owner":"fred"}, "sort": [{"docType": "desc"}]}`
 	queryUsingIndex := func() bool {
 		_, err = db.ExecuteQuery("ns1", queryString)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	}
 	assert.Eventually(t, queryUsingIndex, 2*time.Second, 100*time.Millisecond, "error executing query with sort")
 
 	queryString = `{"selector":{"owner":"fred"}, "sort": [{"size": "desc"}]}`
 	queryUsingIndex = func() bool {
 		_, err = db.ExecuteQuery("ns1", queryString)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	}
 	assert.Eventually(t, queryUsingIndex, 2*time.Second, 100*time.Millisecond, "error executing query with sort")
 
@@ -766,10 +757,7 @@ func TestIndexDeploymentWithOrderAndBadSyntax(t *testing.T) {
 	queryString = `{"selector":{"owner":"fred"}, "sort": [{"color": "desc"}]}`
 	queryUsingIndex = func() bool {
 		_, err = db.ExecuteQuery("ns1", queryString)
-		if err != nil {
-			return false
-		}
-		return true
+		return err == nil
 	}
 	assert.Never(t, queryUsingIndex, 2*time.Second, 100*time.Millisecond, "error should have occurred as there is no index on color field")
 }
@@ -1364,4 +1352,128 @@ func TestMissingRevisionRetrievalFromCache(t *testing.T) {
 	require.Empty(t, stillMissingKeys)
 	require.Equal(t, "rev1", revisions["key1"])
 	require.Equal(t, "rev2", revisions["key2"])
+}
+
+func TestChannelMetadata(t *testing.T) {
+	vdbEnv.init(t, sysNamespaces)
+	defer vdbEnv.cleanup()
+	channelName := "testchannelmetadata"
+
+	db, err := vdbEnv.DBProvider.GetDBHandle(channelName)
+	require.NoError(t, err)
+	vdb := db.(*VersionedDB)
+	expectedChannelMetadata := &channelMetadata{
+		ChannelName:      channelName,
+		NamespaceDBsInfo: make(map[string]*namespaceDBInfo),
+	}
+	savedChannelMetadata, err := vdb.readChannelMetadata()
+	require.NoError(t, err)
+	require.Equal(t, expectedChannelMetadata, savedChannelMetadata)
+	require.Equal(t, expectedChannelMetadata, vdb.channelMetadata)
+
+	// call getNamespaceDBHandle for new dbs, verify that new db names are added to dbMetadataMapping
+	namepsaces := make([]string, 10)
+	for i := 0; i < 10; i++ {
+		ns := fmt.Sprintf("nsname_%d", i)
+		_, err := vdb.getNamespaceDBHandle(ns)
+		require.NoError(t, err)
+		namepsaces[i] = ns
+		expectedChannelMetadata.NamespaceDBsInfo[ns] = &namespaceDBInfo{
+			Namespace: ns,
+			DBName:    constructNamespaceDBName(channelName, ns),
+		}
+	}
+
+	savedChannelMetadata, err = vdb.readChannelMetadata()
+	require.NoError(t, err)
+	require.Equal(t, expectedChannelMetadata, savedChannelMetadata)
+	require.Equal(t, expectedChannelMetadata, vdb.channelMetadata)
+
+	// call getNamespaceDBHandle for existing dbs, verify that no new db names are added to dbMetadataMapping
+	for _, ns := range namepsaces {
+		_, err := vdb.getNamespaceDBHandle(ns)
+		require.NoError(t, err)
+	}
+
+	savedChannelMetadata, err = vdb.readChannelMetadata()
+	require.NoError(t, err)
+	require.Equal(t, expectedChannelMetadata, savedChannelMetadata)
+	require.Equal(t, expectedChannelMetadata, vdb.channelMetadata)
+}
+
+func TestChannelMetadata_NegativeTests(t *testing.T) {
+	vdbEnv.init(t, sysNamespaces)
+	defer vdbEnv.cleanup()
+
+	channelName := "testchannelmetadata-errorpropagation"
+	origCouchAddress := vdbEnv.config.Address
+	vdbEnv.config.MaxRetries = 1
+	vdbEnv.config.MaxRetriesOnStartup = 1
+	vdbEnv.config.RequestTimeout = 1 * time.Second
+
+	// simulate db connection error by setting an invalid address before GetDBHandle, verify error is propagated
+	vdbEnv.config.Address = "127.0.0.1:1"
+	expectedErrMsg := fmt.Sprintf("http error calling couchdb: Get \"http://%s/testchannelmetadata-errorpropagation_\": dial tcp %s: connect: connection refused",
+		vdbEnv.config.Address, vdbEnv.config.Address)
+	_, err := vdbEnv.DBProvider.GetDBHandle(channelName)
+	require.EqualError(t, err, expectedErrMsg)
+	vdbEnv.config.Address = origCouchAddress
+
+	// simulate db connection error by setting an invalid address before getNamespaceDBHandle, verify error is propagated
+	db, err := vdbEnv.DBProvider.GetDBHandle(channelName)
+	require.NoError(t, err)
+	vdb := db.(*VersionedDB)
+	vdbEnv.config.Address = "127.0.0.1:1"
+	expectedErrMsg = fmt.Sprintf("http error calling couchdb: Put \"http://%s/testchannelmetadata-errorpropagation_/channel_metadata\": dial tcp %s: connect: connection refused",
+		vdbEnv.config.Address, vdbEnv.config.Address)
+	_, err = vdb.getNamespaceDBHandle("testnamepsace1")
+	require.EqualError(t, err, expectedErrMsg)
+	vdb.couchInstance.conf.Address = origCouchAddress
+
+	// call createCouchDatabase to simulate peer crashes after metadataDB is created but before channelMetadata is updated
+	// then call DBProvider.GetDBHandle and verify channelMetadata is correctly generated
+	channelName = "testchannelmetadata-simulatefailure-in-between"
+	couchInstance, err := createCouchInstance(vdbEnv.config, &disabled.Provider{})
+	metadatadbName := constructMetadataDBName(channelName)
+	metadataDB, err := createCouchDatabase(couchInstance, metadatadbName)
+	vdb = &VersionedDB{
+		metadataDB: metadataDB,
+	}
+	savedChannelMetadata, err := vdb.readChannelMetadata()
+	require.NoError(t, err)
+	require.Nil(t, savedChannelMetadata)
+
+	db, err = vdbEnv.DBProvider.GetDBHandle(channelName)
+	require.NoError(t, err)
+	vdb = db.(*VersionedDB)
+	expectedChannelMetadata := &channelMetadata{
+		ChannelName:      channelName,
+		NamespaceDBsInfo: make(map[string]*namespaceDBInfo),
+	}
+	savedChannelMetadata, err = vdb.readChannelMetadata()
+	require.NoError(t, err)
+	require.Equal(t, expectedChannelMetadata, savedChannelMetadata)
+	require.Equal(t, expectedChannelMetadata, vdb.channelMetadata)
+
+	// call writeChannelMetadata to simulate peer crashes after channelMetada is saved but before namespace DB is created
+	// then call vdb.getNamespaceDBHandle and verify namespaceDB is created and channelMetadata is correct
+	namespace := "testnamepsace2"
+	namespaceDBName := constructNamespaceDBName(channelName, namespace)
+	vdb.channelMetadata.NamespaceDBsInfo[namespace] = &namespaceDBInfo{Namespace: namespace, DBName: namespaceDBName}
+	err = vdb.writeChannelMetadata()
+	require.NoError(t, err)
+	expectedChannelMetadata.NamespaceDBsInfo = map[string]*namespaceDBInfo{
+		namespace: {Namespace: namespace, DBName: namespaceDBName},
+	}
+	savedChannelMetadata, err = vdb.readChannelMetadata()
+	require.NoError(t, err)
+	require.Equal(t, expectedChannelMetadata, savedChannelMetadata)
+	require.Equal(t, expectedChannelMetadata, vdb.channelMetadata)
+
+	_, err = vdb.getNamespaceDBHandle(namespace)
+	require.NoError(t, err)
+	savedChannelMetadata, err = vdb.readChannelMetadata()
+	require.NoError(t, err)
+	require.Equal(t, expectedChannelMetadata, savedChannelMetadata)
+	require.Equal(t, expectedChannelMetadata, vdb.channelMetadata)
 }
