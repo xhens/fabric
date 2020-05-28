@@ -267,7 +267,7 @@ Start the network
 
 
 We will bring up the Fabric test network and use it to deploy the marbles
-chainocde. Use the following command to navigate to the `test-network` directory
+chaincode. Use the following command to navigate to the `test-network` directory
 in the Fabric samples:
 
 .. code:: bash
@@ -668,7 +668,7 @@ previous example.
 
 A query that does not include all fields in the index will have to scan the full
 database instead. For example, the query below searches for the owner, without
-specifying the the type of item owned. Since the ownerIndexDoc contains both
+specifying the type of item owned. Since the ownerIndexDoc contains both
 the ``owner`` and ``docType`` fields, this query will not be able to use the
 index.
 
