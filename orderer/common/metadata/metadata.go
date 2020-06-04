@@ -25,6 +25,6 @@ func GetVersionInfo() string {
 		metadata.CommitSHA,
 		runtime.Version(),
 		fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
-		"1.0",
+		"1.1",
 	)
 }

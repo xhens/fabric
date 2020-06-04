@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package blockcutter
 
 import (
+	"fmt"
 	"time"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
 )
 
 var logger = flogging.MustGetLogger("orderer.common.blockcutter")
@@ -78,21 +78,31 @@ func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, p
 		logger.Panicf("Could not retrieve orderer config to query batch parameters, block cutting is not possible")
 	}
 
-	prometheus.Main()
+	// err := prometheus.Main()
+	// fmt.Println(err)
 	batchSize := ordererConfig.BatchSize() // TODO: replace the static with a dynamic version (batch, block size)
 
 	messageSizeBytes := messageSizeBytes(msg)
+	fmt.Println("MESSAGE SIZE BYTES ", messageSizeBytes)
+	fmt.Println("Preferred Max Bytes ", batchSize.PreferredMaxBytes)
+	fmt.Println("BATCH SIZE ", batchSize)
 	if messageSizeBytes > batchSize.PreferredMaxBytes {
+		fmt.Println("Message Size Bytes larger than preferred max bytes ", messageSizeBytes)
 		logger.Debugf("The current message, with %v bytes, is larger than the preferred batch size of %v bytes and will be isolated.", messageSizeBytes, batchSize.PreferredMaxBytes)
-
+		fmt.Println("pending batch size ", r.pendingBatch)
+		fmt.Println("size bytes pending batch ", r.pendingBatchSizeBytes)
 		// cut pending batch, if it has any messages
 		if len(r.pendingBatch) > 0 {
+			fmt.Println("cutting here")
 			messageBatch := r.Cut()
+			fmt.Println("cutting message batch ", messageBatch)
 			messageBatches = append(messageBatches, messageBatch)
+			fmt.Println("BATCHES ", messageBatches)
 		}
 
 		// create new batch with single message
 		messageBatches = append(messageBatches, []*cb.Envelope{msg})
+		fmt.Println("message BATCHES ", messageBatches)
 
 		// Record that this batch took no time to fill
 		r.Metrics.BlockFillDuration.With("channel", r.ChannelID).Observe(0)
