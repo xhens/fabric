@@ -829,6 +829,7 @@ func (c *Chain) ordered(msg *orderer.SubmitRequest) (batches [][]*common.Envelop
 		}
 
 		batch := c.support.BlockCutter().Cut()
+		//TODO: maybe here
 		batches = [][]*common.Envelope{}
 		if len(batch) != 0 {
 			batches = append(batches, batch)

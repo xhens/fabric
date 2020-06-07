@@ -8,6 +8,7 @@ package blockcutter
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/orderer/common/prometheus"
 	"time"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -16,6 +17,7 @@ import (
 )
 
 var logger = flogging.MustGetLogger("orderer.common.blockcutter")
+var p = prometheus.New("ledger_blockchain_height", 2, 1)
 
 type OrdererConfigFetcher interface {
 	OrdererConfig() (channelconfig.Orderer, bool)
@@ -40,6 +42,7 @@ type receiver struct {
 	PendingBatchStartTime time.Time
 	ChannelID             string
 	Metrics               *Metrics
+	monitor               *prometheus.Monitor
 }
 
 // NewReceiverImpl creates a Receiver implementation based on the given configtxorderer manager
@@ -72,8 +75,18 @@ func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, p
 		// We are beginning a new batch, mark the time
 		r.PendingBatchStartTime = time.Now()
 	}
+	// p := prometheus.New("ledger_block_height", 2, 1)
+	p1 := prometheus.New("ledger_block_height", 1, 1)
+	fmt.Println("metric name ", p1.MetricName())
+	// TODO: start goroutine. "nested goroutines"
+	status := p.GetStatus()
+	fmt.Println("STATUS ", status)
+	if status == true {
+		fmt.Println("yay")
+	}
+	fmt.Println(r.monitor)
 
-	ordererConfig, ok := r.sharedConfigFetcher.OrdererConfig()
+		ordererConfig, ok := r.sharedConfigFetcher.OrdererConfig()
 	if !ok {
 		logger.Panicf("Could not retrieve orderer config to query batch parameters, block cutting is not possible")
 	}
@@ -106,7 +119,11 @@ func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, p
 
 		// Record that this batch took no time to fill
 		r.Metrics.BlockFillDuration.With("channel", r.ChannelID).Observe(0)
-
+		fmt.Println(ordererConfig.BatchSize())
+		fmt.Println(ordererConfig.MaxChannelsCount())
+		fmt.Println(ordererConfig.ConsensusType())
+		fmt.Println(ordererConfig.ConsensusState())
+		fmt.Println(ordererConfig.ConsensusMetadata())
 		return
 	}
 
@@ -116,6 +133,7 @@ func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, p
 		logger.Debugf("The current message, with %v bytes, will overflow the pending batch of %v bytes.", messageSizeBytes, r.pendingBatchSizeBytes)
 		logger.Debugf("Pending batch would overflow if current message is added, cutting batch now.")
 		messageBatch := r.Cut()
+		fmt.Println("test")
 		r.PendingBatchStartTime = time.Now()
 		messageBatches = append(messageBatches, messageBatch)
 	}
@@ -128,6 +146,7 @@ func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, p
 	if uint32(len(r.pendingBatch)) >= batchSize.MaxMessageCount {
 		logger.Debugf("Batch size met, cutting batch")
 		messageBatch := r.Cut()
+		fmt.Println("test")
 		messageBatches = append(messageBatches, messageBatch)
 		pending = false
 	}

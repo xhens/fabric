@@ -6,6 +6,20 @@ import (
 	"strconv"
 )
 
+const (
+	MIN = "min"
+	MAX = "max"
+	AVG = "avg"
+	SUM = "sum"
+)
+
+const (
+	NAME = "__name__"
+	CHANNEL = "channel"
+	INSTANCE = "instance"
+	JOB = "job"
+)
+
 /*
 Go does not support optional parameters nor does it support method overloading, therefore two different functions for
 each query type must to be built.
