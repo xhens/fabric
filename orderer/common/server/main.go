@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/hyperledger/fabric/orderer/common/prometheus"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -84,8 +85,35 @@ func Main() {
 		logger.Error("failed to parse config: ", err)
 		os.Exit(1)
 	}
+	// var p = prometheus.Newhtt("ledger_transaction_count", 2, 1)
+	// p.Run()
+	go prometheus.Run("http://prometheus:9090/-/healthy")
+	go prometheus.Run("http://prometheus:9443/-/unhealthy")
+	go prometheus.Run("http://0.0.0.0:9090/-/healthy")
+	/*
+	// Create our input and output channels
+	pending, complete := make(chan *prometheus.Resource), make(chan *prometheus.Resource)
+
+	// Launch the StateMonitor
+	status := prometheus.StateMonitor(prometheus.StatusInterval, prometheus.SuccessTimeout)
+
+	// Launch same Poller goroutines
+	for i := 0; i < prometheus.NumPollers; i++ {
+		go prometheus.Poller(pending, complete, status)
+	}
+
+	// Send some Resources to the pending queue
+	go func() {
+		for _, url := range prometheus.Urls {
+			pending <- &prometheus.Resource{Url: url}
+		}
+	}()
+
+	for r := range complete {
+		go r.Sleep(pending)
+	}*/
+
 	initializeLogging()
-	getBlockSizeTest()
 	prettyPrintStruct(conf)
 
 	cryptoProvider := factory.GetDefault()

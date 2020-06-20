@@ -1,6 +1,7 @@
 package prometheus
 
 import (
+	"code.cloudfoundry.org/clock"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -58,21 +59,37 @@ type RangeVectorObject struct {
 	} `json:"data"`
 }
 
-type Monitor interface {
+type MonService interface {
+	StartHeartBeat()
 	MetricName() string
-	GetStatus() bool
-	startHeartBeat()
+	HeartbeatStatus() bool
+	Tick()
+	Status()
+	Run()
 }
 
-type MonitoringService struct {
+// Config contains the parameters to start a new monitoring service
+// Not used right now. Can be passed as an argument to create new object
+type Config struct {
 	metricName string
-	status     bool
-	interval   time.Duration
-	timeout    time.Duration
+	interval time.Duration
+	timeout time.Duration
 }
 
-func New(metricName string, interval time.Duration, timeout time.Duration) Monitor {
-	return &MonitoringService{
+type monitor struct {
+	metricName string
+	status bool
+	interval time.Duration
+	timeout time.Duration
+	clock clock.Clock
+	// HeartbeatTick is the number of Node.Tick invocations that must pass between
+	// heartbeats. That is, a leader sends heartbeat messages to maintain its
+	// leadership every HeartbeatTick ticks.
+	heartbeatTick int
+}
+
+func New(metricName string, interval time.Duration, timeout time.Duration) *monitor {
+	return &monitor{
 		metricName: metricName,
 		status:     false,
 		interval:   interval,
@@ -80,20 +97,19 @@ func New(metricName string, interval time.Duration, timeout time.Duration) Monit
 	}
 }
 
-func (m *MonitoringService) MetricName() string {
+func (m *monitor) MetricName() string {
 	return m.metricName
 }
 
-func (m *MonitoringService) GetStatus() bool {
-	fmt.Println("STATUS ", m.status)
+func (m *monitor) HeartbeatStatus() bool {
 	return m.status
 }
 
-func (m *MonitoringService) startHeartBeat() {
-	m.heartBeat(m.interval, m.timeout)
+func (m *monitor) StartHeartBeat() {
+	m.HeartBeat(m.interval, m.timeout)
 }
 
-func (m *MonitoringService) heartBeat(interval time.Duration, timeout time.Duration) *bool {
+func (m *monitor) HeartBeat(interval time.Duration, timeout time.Duration) *bool {
 	ticker := time.NewTicker(interval * time.Second)
 	done := make(chan bool)
 	go func() {
@@ -103,7 +119,7 @@ func (m *MonitoringService) heartBeat(interval time.Duration, timeout time.Durat
 				fmt.Println("done")
 				return
 			case t := <-ticker.C:
-				status := m.healthChecker()
+				status := m.HealthChecker()
 				if status == true {
 					fmt.Println("Tick at ", t.Local())
 					m.status = true
@@ -124,7 +140,7 @@ func (m *MonitoringService) heartBeat(interval time.Duration, timeout time.Durat
 	return &m.status
 }
 
-func (m *MonitoringService) healthChecker() bool {
+func (m *monitor) HealthChecker() bool {
 	_, err := http.Get("http://localhost:9090")
 	if err != nil {
 		fmt.Println(err)
@@ -260,9 +276,9 @@ func callRangeQuery(rangeQueryOp chan KvMap, metric string) {
 }
 
 func execProm(metric string) {
-	p := New(metric, 2, 10)
-	p.startHeartBeat()
-	status := p.GetStatus()
+	p := New("asd", 1, 2)
+	p.StartHeartBeat()
+	status := p.HeartbeatStatus()
 	if status == true {
 		fmt.Println("yayy")
 		vector := make(chan float64)
@@ -276,28 +292,37 @@ func execProm(metric string) {
 	}
 }
 
+func (m *monitor) Run() {
+	// monitorTicker := m.clock.NewTicker(m.interval)
+	defer func() {
+		statusTicker := m.clock.NewTicker(m.interval * time.Duration(m.heartbeatTick) * 2)
+
+		for {
+			select {
+			// grab status before ticking it
+			case <- statusTicker.C():
+				fmt.Println("working fine")
+			}
+		}
+	}()
+}
+
 func Main() {
 	p := New("blockcutter_block_fill_duration", 2, 10)
-	p1 := New("ledger_blockchain_height", 1, 10)
 
-	p.startHeartBeat()
-	p1.startHeartBeat()
+	p.StartHeartBeat()
 
-	status := p.GetStatus()
-	statusP1 := p1.GetStatus()
+	status := p.HeartbeatStatus()
 
-	if status == true && statusP1 == true {
+	if status == true {
 		fmt.Println("yayy")
 		vector := make(chan float64)
 		matrix := make(chan KvMap)
 		go callSingleQuery(vector, p.MetricName())
-		go callSingleQuery(vector, p1.MetricName())
 		go callRangeQuery(matrix, p.MetricName())
-		go callRangeQuery(matrix, p1.MetricName())
 		singleQuery, rangeQuery := <-vector, <-matrix
-		singleQuery1, rangeQuery1 := <-vector, <-matrix
-		fmt.Println("Final output SINGLE query ", singleQuery, singleQuery1)
-		fmt.Println("Final output RANGE query ", rangeQuery, rangeQuery1)
+		fmt.Println("Final output SINGLE query ", singleQuery)
+		fmt.Println("Final output RANGE query ", rangeQuery)
 	}
 
 	/*	if healthChecker() {

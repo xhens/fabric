@@ -17,7 +17,7 @@ import (
 )
 
 var logger = flogging.MustGetLogger("orderer.common.blockcutter")
-var p = prometheus.New("ledger_blockchain_height", 2, 1)
+var p = prometheus.New("ledger_block_height", 2, 1)
 
 type OrdererConfigFetcher interface {
 	OrdererConfig() (channelconfig.Orderer, bool)
@@ -42,7 +42,6 @@ type receiver struct {
 	PendingBatchStartTime time.Time
 	ChannelID             string
 	Metrics               *Metrics
-	monitor               *prometheus.Monitor
 }
 
 // NewReceiverImpl creates a Receiver implementation based on the given configtxorderer manager
@@ -71,20 +70,20 @@ func NewReceiverImpl(channelID string, sharedConfigFetcher OrdererConfigFetcher,
 //
 // Note that messageBatches can not be greater than 2.
 func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, pending bool) {
+	// TODO: Do not create a new client every time the function is called.
+	// Move the object create outside of the function.
+	p.StartHeartBeat()
 	if len(r.pendingBatch) == 0 {
 		// We are beginning a new batch, mark the time
 		r.PendingBatchStartTime = time.Now()
 	}
-	// p := prometheus.New("ledger_block_height", 2, 1)
-	p1 := prometheus.New("ledger_block_height", 1, 1)
-	fmt.Println("metric name ", p1.MetricName())
+	fmt.Println("metric name ", p.MetricName())
 	// TODO: start goroutine. "nested goroutines"
-	status := p.GetStatus()
+	status := p.HeartbeatStatus()
 	fmt.Println("STATUS ", status)
 	if status == true {
 		fmt.Println("yay")
 	}
-	fmt.Println(r.monitor)
 
 		ordererConfig, ok := r.sharedConfigFetcher.OrdererConfig()
 	if !ok {

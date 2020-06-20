@@ -209,8 +209,3 @@ func (s *server) Deliver(srv ab.AtomicBroadcast_DeliverServer) error {
 	return s.dh.Handle(srv.Context(), deliverServer)
 }
 
-func getBlockSizeTest() {
-	logger.Info("Block size test")
-	logger.Debug("Block size test debug")
-	fmt.Println("Testing orderer server")
-}
