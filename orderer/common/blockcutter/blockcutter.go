@@ -8,7 +8,6 @@ package blockcutter
 
 import (
 	"fmt"
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
 	"time"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -17,7 +16,6 @@ import (
 )
 
 var logger = flogging.MustGetLogger("orderer.common.blockcutter")
-var p = prometheus.New("ledger_block_height", 2, 1)
 
 type OrdererConfigFetcher interface {
 	OrdererConfig() (channelconfig.Orderer, bool)
@@ -72,20 +70,11 @@ func NewReceiverImpl(channelID string, sharedConfigFetcher OrdererConfigFetcher,
 func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, pending bool) {
 	// TODO: Do not create a new client every time the function is called.
 	// Move the object create outside of the function.
-	p.StartHeartBeat()
 	if len(r.pendingBatch) == 0 {
 		// We are beginning a new batch, mark the time
 		r.PendingBatchStartTime = time.Now()
 	}
-	fmt.Println("metric name ", p.MetricName())
-	// TODO: start goroutine. "nested goroutines"
-	status := p.HeartbeatStatus()
-	fmt.Println("STATUS ", status)
-	if status == true {
-		fmt.Println("yay")
-	}
-
-		ordererConfig, ok := r.sharedConfigFetcher.OrdererConfig()
+	ordererConfig, ok := r.sharedConfigFetcher.OrdererConfig()
 	if !ok {
 		logger.Panicf("Could not retrieve orderer config to query batch parameters, block cutting is not possible")
 	}

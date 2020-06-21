@@ -85,33 +85,10 @@ func Main() {
 		logger.Error("failed to parse config: ", err)
 		os.Exit(1)
 	}
-	// var p = prometheus.Newhtt("ledger_transaction_count", 2, 1)
-	// p.Run()
-	go prometheus.Run("http://prometheus:9090/-/healthy")
-	go prometheus.Run("http://prometheus:9443/-/unhealthy")
-	go prometheus.Run("http://0.0.0.0:9090/-/healthy")
-	/*
-	// Create our input and output channels
-	pending, complete := make(chan *prometheus.Resource), make(chan *prometheus.Resource)
-
-	// Launch the StateMonitor
-	status := prometheus.StateMonitor(prometheus.StatusInterval, prometheus.SuccessTimeout)
-
-	// Launch same Poller goroutines
-	for i := 0; i < prometheus.NumPollers; i++ {
-		go prometheus.Poller(pending, complete, status)
-	}
-
-	// Send some Resources to the pending queue
-	go func() {
-		for _, url := range prometheus.Urls {
-			pending <- &prometheus.Resource{Url: url}
-		}
-	}()
-
-	for r := range complete {
-		go r.Sleep(pending)
-	}*/
+	// The URL parameter name is docker container name. When bringing up the test network, we also bring up an extra
+	// container called "prometheus"
+	ledgerTransactionCountMetric := prometheus.State{HealthEndpoint: "http://prometheus:9090/-/healthy", Metric: "ledger_transaction_count"}
+	go ledgerTransactionCountMetric.Run()
 
 	initializeLogging()
 	prettyPrintStruct(conf)
@@ -206,7 +183,7 @@ func Main() {
 		serverConfig.SecOpts.Certificate,
 		[][]byte{clusterClientConfig.SecOpts.Certificate},
 		identityBytes,
-		expirationLogger.Warnf, // This can be used to piggyback a metric event in the future
+		expirationLogger.Warnf, // This can be used to piggyback a ledgerTransactionCountMetric event in the future
 		time.Now(),
 		time.AfterFunc)
 
