@@ -220,11 +220,13 @@ func (r *Registrar) Initialize(consenters map[string]consensus.Consenter) {
 			r.chains[channelID] = chain
 			chain.start()
 		}
-
 	}
 
 	if r.systemChannelID == "" {
-		logger.Warning("registrar initializing without a system channel")
+		logger.Infof("Registrar initializing without a system channel, number of application channels: %d", len(r.chains))
+		if _, etcdRaftFound := r.consenters["etcdraft"]; !etcdRaftFound {
+			logger.Panicf("Error initializing without a system channel: failed to find an etcdraft consenter")
+		}
 	}
 }
 
@@ -346,22 +348,12 @@ func (r *Registrar) newChain(configtx *cb.Envelope) {
 	if ledgerResources.Height() == 0 {
 		ledgerResources.Append(blockledger.CreateNextBlock(ledgerResources, []*cb.Envelope{configtx}))
 	}
-
-	// Copy the map to allow concurrent reads from broadcast/deliver while the new chainSupport is
-	newChains := make(map[string]*ChainSupport)
-	for key, value := range r.chains {
-		newChains[key] = value
-	}
-
 	cs := newChainSupport(r, ledgerResources, r.consenters, r.signer, r.blockcutterMetrics, r.bccsp)
 	chainID := ledgerResources.ConfigtxValidator().ChannelID()
+	r.chains[chainID] = cs
 
 	logger.Infof("Created and starting new channel %s", chainID)
-
-	newChains[string(chainID)] = cs
 	cs.start()
-
-	r.chains = newChains
 }
 
 // ChannelsCount returns the count of the current total number of channels.
@@ -425,7 +417,7 @@ func (r *Registrar) ChannelInfo(channelID string) (types.ChannelInfo, error) {
 	return info, nil
 }
 
-func (r *Registrar) JoinChannel(channelID string, configBlock *cb.Block) (types.ChannelInfo, error) {
+func (r *Registrar) JoinChannel(channelID string, configBlock *cb.Block, isAppChannel bool) (types.ChannelInfo, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 
