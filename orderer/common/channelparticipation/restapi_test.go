@@ -85,13 +85,6 @@ func TestHTTPHandler_ServeHTTP_ListErrors(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, resp.Result().StatusCode)
 	})
 
-	t.Run("missing channels collection", func(t *testing.T) {
-		resp := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, channelparticipation.URLBaseV1, nil)
-		h.ServeHTTP(resp, req)
-		assert.Equal(t, http.StatusNotFound, resp.Result().StatusCode)
-	})
-
 	t.Run("bad resource", func(t *testing.T) {
 		resp := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, channelparticipation.URLBaseV1+"oops", nil)
@@ -140,6 +133,7 @@ func TestHTTPHandler_ServeHTTP_ListAll(t *testing.T) {
 		h.ServeHTTP(resp, req)
 		assert.Equal(t, http.StatusOK, resp.Result().StatusCode)
 		assert.Equal(t, "application/json", resp.Result().Header.Get("Content-Type"))
+		assert.Equal(t, "no-store", resp.Result().Header.Get("Cache-Control"))
 
 		listAll := &types.ChannelList{}
 		err := json.Unmarshal(resp.Body.Bytes(), listAll)
@@ -165,6 +159,7 @@ func TestHTTPHandler_ServeHTTP_ListAll(t *testing.T) {
 		h.ServeHTTP(resp, req)
 		assert.Equal(t, http.StatusOK, resp.Result().StatusCode)
 		assert.Equal(t, "application/json", resp.Result().Header.Get("Content-Type"))
+		assert.Equal(t, "no-store", resp.Result().Header.Get("Cache-Control"))
 
 		listAll := &types.ChannelList{}
 		err := json.Unmarshal(resp.Body.Bytes(), listAll)
@@ -185,6 +180,7 @@ func TestHTTPHandler_ServeHTTP_ListAll(t *testing.T) {
 			h.ServeHTTP(resp, req)
 			assert.Equal(t, http.StatusOK, resp.Result().StatusCode, "Accept: %s", accept)
 			assert.Equal(t, "application/json", resp.Result().Header.Get("Content-Type"))
+			assert.Equal(t, "no-store", resp.Result().Header.Get("Cache-Control"))
 
 			listAll := &types.ChannelList{}
 			err := json.Unmarshal(resp.Body.Bytes(), listAll)
@@ -193,6 +189,14 @@ func TestHTTPHandler_ServeHTTP_ListAll(t *testing.T) {
 			assert.Nil(t, listAll.Channels)
 			assert.Nil(t, listAll.SystemChannel)
 		}
+	})
+
+	t.Run("redirect from base V1 URL", func(t *testing.T) {
+		resp := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, channelparticipation.URLBaseV1, nil)
+		h.ServeHTTP(resp, req)
+		assert.Equal(t, http.StatusFound, resp.Result().StatusCode)
+		assert.Equal(t, channelparticipation.URLBaseV1Channels, resp.Result().Header.Get("Location"))
 	})
 }
 
@@ -216,6 +220,7 @@ func TestHTTPHandler_ServeHTTP_ListSingle(t *testing.T) {
 		h.ServeHTTP(resp, req)
 		assert.Equal(t, http.StatusOK, resp.Result().StatusCode)
 		assert.Equal(t, "application/json", resp.Result().Header.Get("Content-Type"))
+		assert.Equal(t, "no-store", resp.Result().Header.Get("Cache-Control"))
 
 		infoResp := types.ChannelInfo{}
 		err := json.Unmarshal(resp.Body.Bytes(), &infoResp)
