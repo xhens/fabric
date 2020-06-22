@@ -49,7 +49,7 @@ type ChannelManagement interface {
 	ChannelInfo(channelID string) (types.ChannelInfo, error)
 
 	// JoinChannel instructs the orderer to create a channel and join it with the provided config block.
-	JoinChannel(channelID string, configBlock *cb.Block) (types.ChannelInfo, error)
+	JoinChannel(channelID string, configBlock *cb.Block, isAppChannel bool) (types.ChannelInfo, error)
 
 	// RemoveChannel instructs the orderer to remove a channel.
 	// Depending on the removeStorage parameter, the storage resources are either removed or archived.
@@ -163,7 +163,13 @@ func (h *HTTPHandler) serveJoin(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	info, err := h.registrar.JoinChannel(channelID, block)
+	isAppChannel, err := ValidateJoinBlock(channelID, block)
+	if err != nil {
+		h.sendResponseJsonError(resp, http.StatusBadRequest, errors.Wrap(err, "invalid join block"))
+		return
+	}
+
+	info, err := h.registrar.JoinChannel(channelID, block, isAppChannel)
 	if err == nil {
 		info.URL = path.Join(URLBaseV1Channels, info.Name)
 		h.logger.Debugf("Successfully joined channel: %s", info)
@@ -355,8 +361,8 @@ func negotiateContentType(req *http.Request) (string, error) {
 
 func (h *HTTPHandler) sendResponseJsonError(resp http.ResponseWriter, code int, err error) {
 	encoder := json.NewEncoder(resp)
-	resp.WriteHeader(code)
 	resp.Header().Set("Content-Type", "application/json")
+	resp.WriteHeader(code)
 	if err := encoder.Encode(&types.ErrorResponse{Error: err.Error()}); err != nil {
 		h.logger.Errorf("failed to encode error, err: %s", err)
 	}
@@ -364,8 +370,8 @@ func (h *HTTPHandler) sendResponseJsonError(resp http.ResponseWriter, code int, 
 
 func (h *HTTPHandler) sendResponseOK(resp http.ResponseWriter, content interface{}) {
 	encoder := json.NewEncoder(resp)
-	resp.WriteHeader(http.StatusOK)
 	resp.Header().Set("Content-Type", "application/json")
+	resp.WriteHeader(http.StatusOK)
 	if err := encoder.Encode(content); err != nil {
 		h.logger.Errorf("failed to encode content, err: %s", err)
 	}
@@ -373,9 +379,9 @@ func (h *HTTPHandler) sendResponseOK(resp http.ResponseWriter, content interface
 
 func (h *HTTPHandler) sendResponseCreated(resp http.ResponseWriter, location string, content interface{}) {
 	encoder := json.NewEncoder(resp)
-	resp.WriteHeader(http.StatusCreated)
 	resp.Header().Set("Location", location)
 	resp.Header().Set("Content-Type", "application/json")
+	resp.WriteHeader(http.StatusCreated)
 	if err := encoder.Encode(content); err != nil {
 		h.logger.Errorf("failed to encode content, err: %s", err)
 	}
@@ -383,10 +389,10 @@ func (h *HTTPHandler) sendResponseCreated(resp http.ResponseWriter, location str
 
 func (h *HTTPHandler) sendResponseNotAllowed(resp http.ResponseWriter, err error, allow ...string) {
 	encoder := json.NewEncoder(resp)
-	resp.WriteHeader(http.StatusMethodNotAllowed)
 	allowVal := strings.Join(allow, ", ")
 	resp.Header().Set("Allow", allowVal)
 	resp.Header().Set("Content-Type", "application/json")
+	resp.WriteHeader(http.StatusMethodNotAllowed)
 	if err := encoder.Encode(&types.ErrorResponse{Error: err.Error()}); err != nil {
 		h.logger.Errorf("failed to encode error, err: %s", err)
 	}
