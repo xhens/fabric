@@ -9,7 +9,7 @@ package blkstorage
 import (
 	"bytes"
 	"fmt"
-	"path"
+	"path/filepath"
 	"unicode/utf8"
 
 	"github.com/golang/protobuf/proto"
@@ -27,15 +27,19 @@ const (
 	blockHashIdxKeyPrefix       = 'h'
 	txIDIdxKeyPrefix            = 't'
 	blockNumTranNumIdxKeyPrefix = 'a'
-	indexCheckpointKeyStr       = "indexCheckpointKey"
+	indexSavePointKeyStr        = "indexCheckpointKey"
 
 	snapshotFileFormat       = byte(1)
 	snapshotDataFileName     = "txids.data"
 	snapshotMetadataFileName = "txids.metadata"
 )
 
-var indexCheckpointKey = []byte(indexCheckpointKeyStr)
-var errIndexEmpty = errors.New("NoBlockIndexed")
+var (
+	indexSavePointKey              = []byte(indexSavePointKeyStr)
+	errIndexSavePointKeyNotPresent = errors.New("NoBlockIndexed")
+	errNilValue                    = errors.New("")
+	importTxIDsBatchSize           = uint64(1000) // txID is 64 bytes, so batch size roughly translates to 64KB
+)
 
 type blockIdxInfo struct {
 	blockNum  uint64
@@ -57,17 +61,20 @@ func newBlockIndex(indexConfig *IndexConfig, db *leveldbhelper.DBHandle) (*block
 	for _, indexItem := range indexItems {
 		indexItemsMap[indexItem] = true
 	}
-	return &blockIndex{indexItemsMap, db}, nil
+	return &blockIndex{
+		indexItemsMap: indexItemsMap,
+		db:            db,
+	}, nil
 }
 
 func (index *blockIndex) getLastBlockIndexed() (uint64, error) {
 	var blockNumBytes []byte
 	var err error
-	if blockNumBytes, err = index.db.Get(indexCheckpointKey); err != nil {
+	if blockNumBytes, err = index.db.Get(indexSavePointKey); err != nil {
 		return 0, err
 	}
 	if blockNumBytes == nil {
-		return 0, errIndexEmpty
+		return 0, errIndexSavePointKeyNotPresent
 	}
 	return decodeBlockNum(blockNumBytes), nil
 }
@@ -139,7 +146,7 @@ func (index *blockIndex) indexBlock(blockIdxInfo *blockIdxInfo) error {
 		}
 	}
 
-	batch.Put(indexCheckpointKey, encodeBlockNum(blockIdxInfo.blockNum))
+	batch.Put(indexSavePointKey, encodeBlockNum(blockIdxInfo.blockNum))
 	// Setting snyc to true as a precaution, false may be an ok optimization after further testing.
 	if err := index.db.WriteBatch(batch, true); err != nil {
 		return err
@@ -232,6 +239,9 @@ func (index *blockIndex) getTxIDVal(txID string) (*TxIDIndexValue, error) {
 		return nil, ErrNotFoundInIndex
 	}
 	valBytes := itr.Value()
+	if len(valBytes) == 0 {
+		return nil, errNilValue
+	}
 	val := &TxIDIndexValue{}
 	if err := proto.Unmarshal(valBytes, val); err != nil {
 		return nil, errors.Wrapf(err, "unexpected error while unmarshaling bytes [%#v] into TxIDIndexValProto", valBytes)
@@ -260,13 +270,6 @@ func (index *blockIndex) exportUniqueTxIDs(dir string, newHashFunc snapshot.NewH
 		return nil, ErrAttrNotIndexed
 	}
 
-	// create the data file
-	dataFile, err := snapshot.CreateFile(path.Join(dir, snapshotDataFileName), snapshotFileFormat, newHashFunc)
-	if err != nil {
-		return nil, err
-	}
-	defer dataFile.Close()
-
 	dbItr := index.db.GetIterator([]byte{txIDIdxKeyPrefix}, []byte{txIDIdxKeyPrefix + 1})
 	defer dbItr.Release()
 	if err := dbItr.Error(); err != nil {
@@ -275,6 +278,8 @@ func (index *blockIndex) exportUniqueTxIDs(dir string, newHashFunc snapshot.NewH
 
 	var previousTxID string
 	var numTxIDs uint64 = 0
+	var dataFile *snapshot.FileWriter
+	var err error
 	for dbItr.Next() {
 		if err := dbItr.Error(); err != nil {
 			return nil, errors.Wrap(err, "internal leveldb error while iterating for txids")
@@ -288,10 +293,21 @@ func (index *blockIndex) exportUniqueTxIDs(dir string, newHashFunc snapshot.NewH
 			continue
 		}
 		previousTxID = txID
+		if numTxIDs == 0 { // first iteration, create the data file
+			dataFile, err = snapshot.CreateFile(filepath.Join(dir, snapshotDataFileName), snapshotFileFormat, newHashFunc)
+			if err != nil {
+				return nil, err
+			}
+			defer dataFile.Close()
+		}
 		if err := dataFile.EncodeString(txID); err != nil {
 			return nil, err
 		}
 		numTxIDs++
+	}
+
+	if dataFile == nil {
+		return nil, nil
 	}
 
 	dataHash, err := dataFile.Done()
@@ -300,7 +316,7 @@ func (index *blockIndex) exportUniqueTxIDs(dir string, newHashFunc snapshot.NewH
 	}
 
 	// create the metadata file
-	metadataFile, err := snapshot.CreateFile(path.Join(dir, snapshotMetadataFileName), snapshotFileFormat, newHashFunc)
+	metadataFile, err := snapshot.CreateFile(filepath.Join(dir, snapshotMetadataFileName), snapshotFileFormat, newHashFunc)
 	if err != nil {
 		return nil, err
 	}
@@ -310,11 +326,55 @@ func (index *blockIndex) exportUniqueTxIDs(dir string, newHashFunc snapshot.NewH
 		return nil, err
 	}
 	metadataHash, err := metadataFile.Done()
+	if err != nil {
+		return nil, err
+	}
 
 	return map[string][]byte{
 		snapshotDataFileName:     dataHash,
 		snapshotMetadataFileName: metadataHash,
 	}, nil
+}
+
+func importTxIDsFromSnapshot(
+	snapshotDir string,
+	lastBlockNumInSnapshot uint64,
+	db *leveldbhelper.DBHandle) error {
+
+	batch := leveldbhelper.NewUpdateBatch()
+	txIDsMetadata, err := snapshot.OpenFile(filepath.Join(snapshotDir, snapshotMetadataFileName), snapshotFileFormat)
+	if err != nil {
+		return err
+	}
+	numTxIDs, err := txIDsMetadata.DecodeUVarInt()
+	if err != nil {
+		return err
+	}
+	txIDsData, err := snapshot.OpenFile(filepath.Join(snapshotDir, snapshotDataFileName), snapshotFileFormat)
+	if err != nil {
+		return err
+	}
+	for i := uint64(0); i < numTxIDs; i++ {
+		txID, err := txIDsData.DecodeString()
+		if err != nil {
+			return err
+		}
+		batch.Put(
+			constructTxIDKey(txID, lastBlockNumInSnapshot, uint64(i)),
+			[]byte{},
+		)
+		if (i+1)%importTxIDsBatchSize == 0 {
+			if err := db.WriteBatch(batch, true); err != nil {
+				return err
+			}
+			batch = leveldbhelper.NewUpdateBatch()
+		}
+	}
+	batch.Put(indexSavePointKey, encodeBlockNum(lastBlockNumInSnapshot))
+	if err := db.WriteBatch(batch, true); err != nil {
+		return err
+	}
+	return nil
 }
 
 func constructBlockNumKey(blockNum uint64) []byte {

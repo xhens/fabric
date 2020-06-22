@@ -138,17 +138,18 @@ type Profile struct {
 
 // Network holds information about a fabric network.
 type Network struct {
-	RootDir               string
-	StartPort             uint16
-	Components            *Components
-	DockerClient          *docker.Client
-	ExternalBuilders      []fabricconfig.ExternalBuilder
-	NetworkID             string
-	EventuallyTimeout     time.Duration
-	SessionCreateInterval time.Duration
-	MetricsProvider       string
-	StatsdEndpoint        string
-	ClientAuthRequired    bool
+	RootDir                     string
+	StartPort                   uint16
+	Components                  *Components
+	DockerClient                *docker.Client
+	ExternalBuilders            []fabricconfig.ExternalBuilder
+	NetworkID                   string
+	EventuallyTimeout           time.Duration
+	SessionCreateInterval       time.Duration
+	MetricsProvider             string
+	StatsdEndpoint              string
+	ClientAuthRequired          bool
+	ChannelParticipationEnabled bool
 
 	PortsByBrokerID  map[string]Ports
 	PortsByOrdererID map[string]Ports
@@ -1171,10 +1172,11 @@ func (n *Network) BrokerGroupRunner() ifrit.Runner {
 
 // OrdererRunner returns an ifrit.Runner for the specified orderer. The runner
 // can be used to start and manage an orderer process.
-func (n *Network) OrdererRunner(o *Orderer) *ginkgomon.Runner {
+func (n *Network) OrdererRunner(o *Orderer, env ...string) *ginkgomon.Runner {
 	cmd := exec.Command(n.Components.Orderer())
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("FABRIC_CFG_PATH=%s", n.OrdererDir(o)))
+	cmd.Env = append(cmd.Env, env...)
 
 	config := ginkgomon.Config{
 		AnsiColorCode:     n.nextColor(),

@@ -310,6 +310,7 @@ func TestRecovery(t *testing.T) {
 	// now create the genesis block
 	genesisBlock, _ := configtxtest.MakeGenesisBlock(constructTestLedgerID(1))
 	ledger, err := provider1.open(constructTestLedgerID(1))
+	assert.NoError(t, err)
 	ledger.CommitLegacy(&lgr.BlockAndPvtData{Block: genesisBlock}, &lgr.CommitOptions{})
 	ledger.Close()
 
@@ -454,6 +455,9 @@ func TestLedgerBackup(t *testing.T) {
 		HistoryDBConfig: &lgr.HistoryDBConfig{
 			Enabled: true,
 		},
+		SnapshotsConfig: &lgr.SnapshotsConfig{
+			RootDir: filepath.Join(originalPath, "snapshots"),
+		},
 	}
 	provider := testutilNewProvider(origConf, t, &mock.DeployedChaincodeInfoProvider{})
 	bg, gb := testutil.NewBlockGenerator(t, ledgerid, false)
@@ -503,6 +507,9 @@ func TestLedgerBackup(t *testing.T) {
 		},
 		HistoryDBConfig: &lgr.HistoryDBConfig{
 			Enabled: true,
+		},
+		SnapshotsConfig: &lgr.SnapshotsConfig{
+			RootDir: filepath.Join(restorePath, "snapshots"),
 		},
 	}
 	provider = testutilNewProvider(restoreConf, t, &mock.DeployedChaincodeInfoProvider{})
@@ -589,6 +596,9 @@ func testConfig(t *testing.T) (conf *lgr.Config, cleanup func()) {
 		},
 		HistoryDBConfig: &lgr.HistoryDBConfig{
 			Enabled: true,
+		},
+		SnapshotsConfig: &lgr.SnapshotsConfig{
+			RootDir: filepath.Join(path, "snapshots"),
 		},
 	}
 	cleanup = func() {

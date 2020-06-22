@@ -150,12 +150,6 @@ type fileDetails struct {
 	Length      int    `json:"length"`
 }
 
-//couchDoc defines the structure for a JSON document value
-type couchDoc struct {
-	jsonValue   []byte
-	attachments []*attachmentInfo
-}
-
 //batchRetrieveDocMetadataResponse is used for processing REST batch responses from CouchDB
 type batchRetrieveDocMetadataResponse struct {
 	Rows []struct {
@@ -200,6 +194,21 @@ type databaseSecurity struct {
 		Names []string `json:"names"`
 		Roles []string `json:"roles"`
 	} `json:"members"`
+}
+
+//couchDoc defines the structure for a JSON document value
+type couchDoc struct {
+	jsonValue   []byte
+	attachments []*attachmentInfo
+}
+
+func (d *couchDoc) key() (string, error) {
+	m := make(jsonValue)
+	if err := json.Unmarshal(d.jsonValue, &m); err != nil {
+		return "", err
+	}
+	return m[idField].(string), nil
+
 }
 
 // closeResponseBody discards the body and then closes it to enable returning it to
@@ -594,7 +603,7 @@ func (dbclient *couchDatabase) saveDoc(id string, rev string, couchDoc *couchDoc
 	}
 
 	//Set up a buffer for the data to be pushed to couchdb
-	data := []byte{}
+	var data []byte
 
 	//Set up a default boundary for use by multipart if sending attachments
 	defaultBoundary := ""
@@ -616,7 +625,7 @@ func (dbclient *couchDatabase) saveDoc(id string, rev string, couchDoc *couchDoc
 	} else { // there are attachments
 
 		//attachments are included, create the multipart definition
-		multipartData, multipartBoundary, err3 := createAttachmentPart(couchDoc, defaultBoundary)
+		multipartData, multipartBoundary, err3 := createAttachmentPart(couchDoc)
 		if err3 != nil {
 			return "", err3
 		}
@@ -673,7 +682,7 @@ func (dbclient *couchDatabase) getDocumentRevision(id string) string {
 	return rev
 }
 
-func createAttachmentPart(couchDoc *couchDoc, defaultBoundary string) (bytes.Buffer, string, error) {
+func createAttachmentPart(couchDoc *couchDoc) (bytes.Buffer, string, error) {
 
 	//Create a buffer for writing the result
 	writeBuffer := new(bytes.Buffer)
@@ -682,7 +691,7 @@ func createAttachmentPart(couchDoc *couchDoc, defaultBoundary string) (bytes.Buf
 	writer := multipart.NewWriter(writeBuffer)
 
 	//retrieve the boundary for the multipart
-	defaultBoundary = writer.Boundary()
+	defaultBoundary := writer.Boundary()
 
 	fileAttachments := map[string]fileDetails{}
 
@@ -691,7 +700,8 @@ func createAttachmentPart(couchDoc *couchDoc, defaultBoundary string) (bytes.Buf
 	}
 
 	attachmentJSONMap := map[string]interface{}{
-		"_attachments": fileAttachments}
+		"_attachments": fileAttachments,
+	}
 
 	//Add any data uploaded with the files
 	if couchDoc.jsonValue != nil {
@@ -1725,11 +1735,10 @@ func (couchInstance *couchInstance) handleRequest(ctx context.Context, method, d
 		payloadData.ReadFrom(bytes.NewReader(data))
 
 		//Create request based on URL for couchdb operation
-		req, err := http.NewRequest(method, requestURL.String(), payloadData)
+		req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), payloadData)
 		if err != nil {
 			return nil, nil, errors.Wrap(err, "error creating http request")
 		}
-		req.WithContext(ctx)
 
 		//set the request to close on completion if shared connections are not allowSharedConnection
 		//Current CouchDB has a problem with zero length attachments, do not allow the connection to be reused.

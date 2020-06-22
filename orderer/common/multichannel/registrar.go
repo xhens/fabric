@@ -220,11 +220,13 @@ func (r *Registrar) Initialize(consenters map[string]consensus.Consenter) {
 			r.chains[channelID] = chain
 			chain.start()
 		}
-
 	}
 
 	if r.systemChannelID == "" {
-		logger.Warning("registrar initializing without a system channel")
+		logger.Infof("Registrar initializing without a system channel, number of application channels: %d", len(r.chains))
+		if _, etcdRaftFound := r.consenters["etcdraft"]; !etcdRaftFound {
+			logger.Panicf("Error initializing without a system channel: failed to find an etcdraft consenter")
+		}
 	}
 }
 
@@ -233,6 +235,13 @@ func (r *Registrar) SystemChannelID() string {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 	return r.systemChannelID
+}
+
+// SystemChannel returns the ChainSupport for the system channel.
+func (r *Registrar) SystemChannel() *ChainSupport {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+	return r.systemChannel
 }
 
 // BroadcastChannelSupport returns the message channel header, whether the message is a config update
@@ -247,10 +256,11 @@ func (r *Registrar) BroadcastChannelSupport(msg *cb.Envelope) (*cb.ChannelHeader
 	cs := r.GetChain(chdr.ChannelId)
 	// New channel creation
 	if cs == nil {
-		if r.systemChannel == nil {
-			return nil, false, nil, errors.New("channel creation request not allowed because the orderer system channel is not yet defined")
+		sysChan := r.SystemChannel()
+		if sysChan == nil {
+			return nil, false, nil, errors.New("channel creation request not allowed because the orderer system channel is not defined")
 		}
-		cs = r.systemChannel
+		cs = sysChan
 	}
 
 	isConfig := false
@@ -338,22 +348,12 @@ func (r *Registrar) newChain(configtx *cb.Envelope) {
 	if ledgerResources.Height() == 0 {
 		ledgerResources.Append(blockledger.CreateNextBlock(ledgerResources, []*cb.Envelope{configtx}))
 	}
-
-	// Copy the map to allow concurrent reads from broadcast/deliver while the new chainSupport is
-	newChains := make(map[string]*ChainSupport)
-	for key, value := range r.chains {
-		newChains[key] = value
-	}
-
 	cs := newChainSupport(r, ledgerResources, r.consenters, r.signer, r.blockcutterMetrics, r.bccsp)
 	chainID := ledgerResources.ConfigtxValidator().ChannelID()
+	r.chains[chainID] = cs
 
 	logger.Infof("Created and starting new channel %s", chainID)
-
-	newChains[string(chainID)] = cs
 	cs.start()
-
-	r.chains = newChains
 }
 
 // ChannelsCount returns the count of the current total number of channels.
@@ -401,6 +401,40 @@ func (r *Registrar) ChannelList() types.ChannelList {
 }
 
 func (r *Registrar) ChannelInfo(channelID string) (types.ChannelInfo, error) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+
+	info := types.ChannelInfo{}
+	cs, ok := r.chains[channelID]
+	if !ok {
+		return info, types.ErrChannelNotExist
+	}
+
+	info.Name = channelID
+	info.Height = cs.Height()
+	info.ClusterRelation, info.Status = cs.StatusReport()
+
+	return info, nil
+}
+
+func (r *Registrar) JoinChannel(channelID string, configBlock *cb.Block, isAppChannel bool) (types.ChannelInfo, error) {
+	r.lock.RLock()
+	defer r.lock.RUnlock()
+
+	if r.systemChannelID != "" {
+		return types.ChannelInfo{}, types.ErrSystemChannelExists
+	}
+
+	_, ok := r.chains[channelID]
+	if ok {
+		return types.ChannelInfo{}, types.ErrChannelAlreadyExists
+	}
+
 	//TODO
 	return types.ChannelInfo{}, errors.New("Not implemented yet")
+}
+
+func (r *Registrar) RemoveChannel(channelID string, removeStorage bool) error {
+	//TODO
+	return errors.New("Not implemented yet")
 }

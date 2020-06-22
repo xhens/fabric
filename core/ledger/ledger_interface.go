@@ -45,6 +45,8 @@ type Config struct {
 	PrivateDataConfig *PrivateDataConfig
 	// HistoryDBConfig holds the configuration parameters for the transaction history database.
 	HistoryDBConfig *HistoryDBConfig
+	// SnapshotsConfig holds the configuration parameters for the snapshots.
+	SnapshotsConfig *SnapshotsConfig
 }
 
 // StateDBConfig is a structure used to configure the state parameters for the ledger.
@@ -111,6 +113,12 @@ type PrivateDataConfig struct {
 // HistoryDBConfig is a structure used to configure the transaction history database.
 type HistoryDBConfig struct {
 	Enabled bool
+}
+
+// SnapshotsConfig is a structure used to configure snapshot function
+type SnapshotsConfig struct {
+	// RootDir is the top-level directory for the snapshots.
+	RootDir string
 }
 
 // PeerLedgerProvider provides handle to ledger instances
@@ -592,10 +600,14 @@ type DeployedChaincodeInfoProvider interface {
 	UpdatedChaincodes(stateUpdates map[string][]*kvrwset.KVWrite) ([]*ChaincodeLifecycleInfo, error)
 	// ChaincodeInfo returns the info about a deployed chaincode
 	ChaincodeInfo(channelName, chaincodeName string, qe SimpleQueryExecutor) (*DeployedChaincodeInfo, error)
+	// AllChaincodesInfo returns the mapping of chaincode name to DeployedChaincodeInfo for all the deployed chaincodes
+	AllChaincodesInfo(channelName string, qe SimpleQueryExecutor) (map[string]*DeployedChaincodeInfo, error)
 	// CollectionInfo returns the proto msg that defines the named collection. This function can be called for both explicit and implicit collections
 	CollectionInfo(channelName, chaincodeName, collectionName string, qe SimpleQueryExecutor) (*peer.StaticCollectionConfig, error)
 	// ImplicitCollections returns a slice that contains one proto msg for each of the implicit collections
 	ImplicitCollections(channelName, chaincodeName string, qe SimpleQueryExecutor) ([]*peer.StaticCollectionConfig, error)
+	// GenerateImplicitCollectionForOrg generates implicit collection for the org
+	GenerateImplicitCollectionForOrg(mspid string) *peer.StaticCollectionConfig
 	// AllCollectionsConfigPkg returns a combined collection config pkg that contains both explicit and implicit collections
 	AllCollectionsConfigPkg(channelName, chaincodeName string, qe SimpleQueryExecutor) (*peer.CollectionConfigPackage, error)
 }
