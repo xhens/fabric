@@ -8,6 +8,7 @@ package solo
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/orderer/common/prometheus"
 	"time"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -123,7 +124,7 @@ func (ch *chain) main() {
 						continue
 					}
 				}
-				batches, pending := ch.support.BlockCutter().Ordered(msg.normalMsg)
+				batches, pending := ch.support.BlockCutter().Ordered(msg.normalMsg, &prometheus.Controller{})
 
 				for _, batch := range batches {
 					block := ch.support.CreateNextBlock(batch)

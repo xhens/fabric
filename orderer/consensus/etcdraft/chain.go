@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
+	"github.com/hyperledger/fabric/orderer/common/prometheus"
 	"github.com/hyperledger/fabric/orderer/common/types"
 	"sync"
 	"sync/atomic"
@@ -618,6 +619,19 @@ func (c *Chain) run() {
 		c.Metrics.IsLeader.Set(0)
 	}
 
+	ledgerTransactionCount := prometheus.MetricMonitor{
+		Metric:     prometheus.LedgerTransactionCountRate,
+		MetricType: prometheus.Matrix,
+		Label:      prometheus.Chaincode,
+		StatType:   prometheus.Max,
+	}
+	go ledgerTransactionCount.Run()
+	// controller := &prometheus.Controller{FirstMetric: &ledgerTransactionCount, SaturationPoint: 15}
+	controller := prometheus.NewControllerWithSingleMetric(&ledgerTransactionCount, 10)
+	if controller.FirstMetric.Value > float64(controller.SaturationPoint) {
+		controller.CurrentValue = controller.FirstMetric.Value
+	}
+
 	for {
 		select {
 		case s := <-submitC:
@@ -636,7 +650,7 @@ func (c *Chain) run() {
 				continue
 			}
 
-			batches, pending, err := c.ordered(s.req)
+			batches, pending, err := c.ordered(s.req, controller)
 			if err != nil {
 				c.logger.Errorf("Failed to order message: %s", err)
 				continue
@@ -820,7 +834,7 @@ func (c *Chain) writeBlock(block *common.Block, index uint64) {
 //   -- pending bool; if there are envelopes pending to be ordered,
 //   -- err error; the error encountered, if any.
 // It takes care of config messages as well as the revalidation of messages if the config sequence has advanced.
-func (c *Chain) ordered(msg *orderer.SubmitRequest) (batches [][]*common.Envelope, pending bool, err error) {
+func (c *Chain) ordered(msg *orderer.SubmitRequest, controller *prometheus.Controller) (batches [][]*common.Envelope, pending bool, err error) {
 	seq := c.support.Sequence()
 
 	if c.isConfig(msg.Payload) {
@@ -835,7 +849,6 @@ func (c *Chain) ordered(msg *orderer.SubmitRequest) (batches [][]*common.Envelop
 		}
 
 		batch := c.support.BlockCutter().Cut()
-		//TODO: maybe here
 		batches = [][]*common.Envelope{}
 		if len(batch) != 0 {
 			batches = append(batches, batch)
@@ -851,7 +864,7 @@ func (c *Chain) ordered(msg *orderer.SubmitRequest) (batches [][]*common.Envelop
 			return nil, true, errors.Errorf("bad normal message: %s", err)
 		}
 	}
-	batches, pending = c.support.BlockCutter().Ordered(msg.Payload)
+	batches, pending = c.support.BlockCutter().Ordered(msg.Payload, controller)
 	return batches, pending, nil
 
 }

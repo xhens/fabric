@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -84,11 +83,18 @@ func Main() {
 		logger.Error("failed to parse config: ", err)
 		os.Exit(1)
 	}
-	// The URL parameter name is docker container name. When bringing up the test network, we also bring up an extra
-	// container called "prometheus"
-	ledgerTransactionCountMetric := prometheus.State{HealthEndpoint: "http://prometheus:9090/-/healthy", Metric: "ledger_transaction_count"}
-	go ledgerTransactionCountMetric.Run()
 
+/*	LedgerTransactionCount := prometheus.MetricMonitor{
+		Metric:     "rate(ledger_transaction_count[1m])",
+		MetricType: prometheus.Matrix,
+		Label:      prometheus.Chaincode,
+		StatType:   prometheus.Max,
+	}
+	go LedgerTransactionCount.Run()*/
+
+	// go mainController.SuggestNewBlockSize()
+
+	// deliverBlocksSent := prometheus.MetricMonitor{Metric: prometheus.DeliverBLocksSent, MetricType: prometheus.Matrix, Label: prometheus.BlockDataType, StatType: prometheus.Max}
 	initializeLogging()
 	prettyPrintStruct(conf)
 

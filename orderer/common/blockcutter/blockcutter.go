@@ -8,6 +8,8 @@ package blockcutter
 
 import (
 	"fmt"
+	"github.com/hyperledger/fabric/orderer/common/prometheus"
+	"math/rand"
 	"time"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -21,12 +23,16 @@ type OrdererConfigFetcher interface {
 	OrdererConfig() (channelconfig.Orderer, bool)
 }
 
+type ControllerDataFetcher interface {
+	ControllerConfig() (prometheus.ControllerInterface, bool)
+}
+
 // Receiver defines a sink for the ordered broadcast messages
 type Receiver interface {
 	// Ordered should be invoked sequentially as messages are ordered
 	// Each batch in `messageBatches` will be wrapped into a block.
 	// `pending` indicates if there are still messages pending in the receiver.
-	Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, pending bool)
+	Ordered(msg *cb.Envelope, controller *prometheus.Controller) (messageBatches [][]*cb.Envelope, pending bool)
 
 	// Cut returns the current batch and starts a new one
 	Cut() []*cb.Envelope
@@ -51,6 +57,13 @@ func NewReceiverImpl(channelID string, sharedConfigFetcher OrdererConfigFetcher,
 	}
 }
 
+func randU32(min, max uint32) uint32 {
+	var a = rand.Uint32()
+	a %= max - min
+	a += min
+	return a
+}
+
 // Ordered should be invoked sequentially as messages are ordered
 //
 // messageBatches length: 0, pending: false
@@ -67,9 +80,7 @@ func NewReceiverImpl(channelID string, sharedConfigFetcher OrdererConfigFetcher,
 //   - impossible
 //
 // Note that messageBatches can not be greater than 2.
-func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, pending bool) {
-	// TODO: Do not create a new client every time the function is called.
-	// Move the object create outside of the function.
+func (r *receiver) Ordered(msg *cb.Envelope, controller *prometheus.Controller) (messageBatches [][]*cb.Envelope, pending bool) {
 	if len(r.pendingBatch) == 0 {
 		// We are beginning a new batch, mark the time
 		r.PendingBatchStartTime = time.Now()
@@ -78,19 +89,22 @@ func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, p
 	if !ok {
 		logger.Panicf("Could not retrieve orderer config to query batch parameters, block cutting is not possible")
 	}
+	// batchSize := ordererConfig.BatchSize() // TODO: replace the static with a dynamic version (batch, block size)
 
-	// err := prometheus.Main()
-	// fmt.Println(err)
-	batchSize := ordererConfig.BatchSize() // TODO: replace the static with a dynamic version (batch, block size)
+	batchSize := ordererConfig.BatchSize()
+	fmt.Println("UPDATED batch size ", batchSize)
+	bytes := messageSizeBytes(msg)
 
-	messageSizeBytes := messageSizeBytes(msg)
-	fmt.Println("MESSAGE SIZE BYTES ", messageSizeBytes)
-	fmt.Println("Preferred Max Bytes ", batchSize.PreferredMaxBytes)
-	fmt.Println("BATCH SIZE ", batchSize)
-	if messageSizeBytes > batchSize.PreferredMaxBytes {
-		fmt.Println("Message Size Bytes larger than preferred max bytes ", messageSizeBytes)
-		logger.Debugf("The current message, with %v bytes, is larger than the preferred batch size of %v bytes and will be isolated.", messageSizeBytes, batchSize.PreferredMaxBytes)
-		fmt.Println("pending batch size ", r.pendingBatch)
+	// TODO: First Condition
+	if bytes > batchSize.PreferredMaxBytes {
+		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), prometheus.PreferredMaxBytes, bytes)
+		if ok == true {
+			ordererConfig.BatchSize().PreferredMaxBytes = newBatchSize.PreferredMaxBytes
+			fmt.Println("Updated attribute: ", ordererConfig.BatchSize().PreferredMaxBytes)
+		}
+		// TODO: increase max bytes on next iteration (?maybe)
+		fmt.Println("Message Size Bytes larger than preferred max bytes ", bytes)
+		logger.Debugf("The current message, with %v bytes, is larger than the preferred batch size of %v bytes and will be isolated.", bytes, batchSize.PreferredMaxBytes)
 		fmt.Println("size bytes pending batch ", r.pendingBatchSizeBytes)
 		// cut pending batch, if it has any messages
 		if len(r.pendingBatch) > 0 {
@@ -98,47 +112,49 @@ func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, p
 			messageBatch := r.Cut()
 			fmt.Println("cutting message batch ", messageBatch)
 			messageBatches = append(messageBatches, messageBatch)
-			fmt.Println("BATCHES ", messageBatches)
 		}
+		// TODO: increase PreferredMaxBytes batch size here (going to be used in the next block cut)
 
 		// create new batch with single message
 		messageBatches = append(messageBatches, []*cb.Envelope{msg})
-		fmt.Println("message BATCHES ", messageBatches)
 
 		// Record that this batch took no time to fill
 		r.Metrics.BlockFillDuration.With("channel", r.ChannelID).Observe(0)
-		fmt.Println(ordererConfig.BatchSize())
-		fmt.Println(ordererConfig.MaxChannelsCount())
-		fmt.Println(ordererConfig.ConsensusType())
-		fmt.Println(ordererConfig.ConsensusState())
-		fmt.Println(ordererConfig.ConsensusMetadata())
 		return
 	}
 
-	messageWillOverflowBatchSizeBytes := r.pendingBatchSizeBytes+messageSizeBytes > batchSize.PreferredMaxBytes
-
+	// TODO: Second Condition
+	messageWillOverflowBatchSizeBytes := r.pendingBatchSizeBytes+bytes > batchSize.PreferredMaxBytes
 	if messageWillOverflowBatchSizeBytes {
-		logger.Debugf("The current message, with %v bytes, will overflow the pending batch of %v bytes.", messageSizeBytes, r.pendingBatchSizeBytes)
+		logger.Debugf("The current message, with %v bytes, will overflow the pending batch of %v bytes.", bytes, r.pendingBatchSizeBytes)
 		logger.Debugf("Pending batch would overflow if current message is added, cutting batch now.")
 		messageBatch := r.Cut()
-		fmt.Println("test")
 		r.PendingBatchStartTime = time.Now()
 		messageBatches = append(messageBatches, messageBatch)
 	}
 
 	logger.Debugf("Enqueuing message into batch")
 	r.pendingBatch = append(r.pendingBatch, msg)
-	r.pendingBatchSizeBytes += messageSizeBytes
+	r.pendingBatchSizeBytes += bytes
+	fmt.Println("SIZE IN BYTES OF PENDING BATCH ", bytes)
+	fmt.Println("LENGTH OF BATCHES BEFORE CUTTING ", len(messageBatches))
 	pending = true
 
+	// TODO: Third condition
 	if uint32(len(r.pendingBatch)) >= batchSize.MaxMessageCount {
+		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), prometheus.MaxMessageCount, bytes)
+		if ok == true {
+			ordererConfig.BatchSize().MaxMessageCount = newBatchSize.MaxMessageCount
+			fmt.Println("Updated attribute: ", ordererConfig.BatchSize().MaxMessageCount)
+		}
 		logger.Debugf("Batch size met, cutting batch")
 		messageBatch := r.Cut()
-		fmt.Println("test")
 		messageBatches = append(messageBatches, messageBatch)
+		fmt.Println("message batch just cut", "MESSAGE BATCHES LENGTH", len(messageBatches)) //TODO: Output length
 		pending = false
-	}
+		// TODO: Increase MaxMessageCount on next iteration
 
+	}
 	return
 }
 
@@ -156,4 +172,9 @@ func (r *receiver) Cut() []*cb.Envelope {
 
 func messageSizeBytes(message *cb.Envelope) uint32 {
 	return uint32(len(message.Payload) + len(message.Signature))
+}
+
+func customMessageSizeBytes(message *cb.Envelope) uint32 {
+	fmt.Println(uint32(len(message.Payload)-len(message.Signature)), "KB")
+	return uint32(len(message.Payload) - len(message.Signature))
 }

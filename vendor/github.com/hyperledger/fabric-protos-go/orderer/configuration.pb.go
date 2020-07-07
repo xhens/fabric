@@ -106,6 +106,7 @@ func (m *ConsensusType) GetState() ConsensusType_State {
 	return ConsensusType_STATE_NORMAL
 }
 
+// TODO: check out
 type BatchSize struct {
 	// Simply specified as number of messages for now, in the future
 	// we may want to allow this to be specified by size in bytes

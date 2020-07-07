@@ -6,20 +6,6 @@ import (
 	"strconv"
 )
 
-const (
-	MIN = "min"
-	MAX = "max"
-	AVG = "avg"
-	SUM = "sum"
-)
-
-const (
-	NAME = "__name__"
-	CHANNEL = "channel"
-	INSTANCE = "instance"
-	JOB = "job"
-)
-
 /*
 Go does not support optional parameters nor does it support method overloading, therefore two different functions for
 each query type must to be built.
@@ -30,7 +16,7 @@ each query type must to be built.
 //@returns {Map<string, value> | value} Either a map of values or a single value depending on if response is matrix or vector.
 //In this case, it returns a single value.
 func extractFirstValueFromSingleQuery(instantVector InstantVectorObject) (float64, error) {
-	if instantVector.Data.ResultType == VECTOR && len(instantVector.Data.Result) > 0 {
+	if instantVector.Data.ResultType == Vector && len(instantVector.Data.Result) > 0 {
 		val := instantVector.Data.Result[0].Value[1].(string)
 		floatConversion, _ := strconv.ParseFloat(val, 64)
 		return floatConversion, nil
@@ -40,8 +26,8 @@ func extractFirstValueFromSingleQuery(instantVector InstantVectorObject) (float6
 	}
 }
 
-func extractFirstValueFromQueryRange(rangeVector RangeVectorObject) (KvMap, error) {
-	if rangeVector.Data.ResultType == MATRIX {
+func extractFirstValueFromGenericQueryRange(rangeVector GenericRangeVector) (KvMap, error) {
+	if rangeVector.Data.ResultType == Matrix {
 		values := rangeVector.Data.Result
 		var items []KvPair
 		kvMap := KvMap{items}
@@ -54,27 +40,35 @@ func extractFirstValueFromQueryRange(rangeVector RangeVectorObject) (KvMap, erro
 		}
 		return kvMap, nil
 	} else {
-		log.Printf("Result type unknown %s", rangeVector.Data.ResultType)
+		log.Printf("result type unknown: %s", rangeVector.Data.ResultType)
 		return KvMap{}, fmt.Errorf("result type unknown %s", rangeVector.Data.ResultType)
 	}
 }
 
 // label: name, job, etc
-func extractStatisticFromQueryRange(rangeVector RangeVectorObject, statType string, label string) (KvMap, error) {
-	if rangeVector.Data.ResultType == MATRIX {
+func extractStatisticFromGenericQueryRange(rangeVector GenericRangeVector, statType string, label string) (KvMap, error) {
+	if rangeVector.Data.ResultType == Matrix {
 		var items []KvPair
 		kvMap := KvMap{items}
 		for _, result := range rangeVector.Data.Result {
 			var name string
 			switch label {
-			case NAME:
+			case Name:
 				name = result.Metric.Name
-			case CHANNEL:
+			case Channel:
 				name = result.Metric.Channel
-			case JOB:
+			case Job:
 				name = result.Metric.Job
-			case INSTANCE:
+			case Instance:
 				name = result.Metric.Instance
+			case TransactionType:
+				name = result.Metric.TransactionType
+			case ValidationCode:
+				name = result.Metric.ValidationCode
+			case Chaincode:
+				name = result.Metric.Chaincode
+			case Status:
+				name = result.Metric.Status
 			}
 			series := result.Values
 			values := extractValuesFromTimeSeries(series)
@@ -88,7 +82,6 @@ func extractStatisticFromQueryRange(rangeVector RangeVectorObject, statType stri
 		return KvMap{}, fmt.Errorf("result type unknown %s", rangeVector.Data.ResultType)
 	}
 }
-
 
 // Extract values from time series data
 // @param Array series Array of the form [ [timeIndex, value], [], ..., [] ]
@@ -105,16 +98,16 @@ func extractValuesFromTimeSeries(series [][]interface{}) []float64 {
 
 func retrieveStatisticsFromArray(values []float64, statType string) float64 {
 	switch statType {
-	case MAX:
+	case Max:
 		max := findMaxOfFloatSlice(values)
 		return max
-	case MIN:
+	case Min:
 		min := findMinOfFloatSlice(values)
 		return min
-	case AVG:
+	case Avg:
 		avg := findAvgOfFloatSlice(values)
 		return avg
-	case SUM:
+	case Sum:
 		sum := sumOfFloatSlice(values)
 		return sum
 	default:

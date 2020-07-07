@@ -2,7 +2,6 @@ package prometheus
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -30,7 +29,7 @@ type InstantVectorObject struct {
 	Data   struct {
 		ResultType string `json:"resultType"`
 		Result     []struct {
-			Metric struct { // metric fields are not always the same. They depend on specific metrics
+			Metric struct {
 				Name     string `json:"__name__"`
 				Channel  string `json:"channel"`
 				Instance string `json:"instance"`
@@ -41,25 +40,37 @@ type InstantVectorObject struct {
 	} `json:"data"`
 }
 
-type RangeVectorObject struct {
+type GenericRangeVector struct {
 	Status string `json:"status"`
 	Data   struct {
 		ResultType string `json:"resultType"`
 		Result     []struct {
 			Metric struct {
-				Name     string `json:"__name__"`
-				Channel  string `json:"channel"`
-				Instance string `json:"instance"`
-				Job      string `json:"job"`
-				Le       string `json:"le"`
+				Name            string `json:"__name__"`
+				Chaincode       string `json:"chaincode"`
+				Channel         string `json:"channel"`
+				DataType        string `json:"data_type"`
+				Filtered        string `json:"filtered"`
+				Instance        string `json:"instance"`
+				Job             string `json:"job"`
+				TransactionType string `json:"transaction_type"`
+				ValidationCode  string `json:"validation_code"`
+				Status          string `json:"status"`
+				Le              string `json:"le"`
 			} `json:"metric"`
 			Values [][]interface{} `json:"values"`
-		} `json:"result"`
+		}
 	} `json:"data"`
 }
 
-// TODO: testing locally can be localhost. testing on fabric shpuld be prometheus.
-var baseUrl = "http://prometheus:9090"
+type MetricError struct {
+	status    string
+	errorType string
+	error     string
+}
+
+// TODO: testing locally can be localhost. testing on fabric should be prometheus.
+var baseUrl = ContainerHost
 var SINGLE = "/api/v1/query"
 var RANGE = "/api/v1/query_range"
 
@@ -73,21 +84,21 @@ func retrieveTargetParameters(queryType string, query string) *url.URL {
 	}
 	relativeUrl.RawQuery = queryStringParams.Encode()
 	fullUrl := base.ResolveReference(relativeUrl)
-	log.Println("Generated url: ", fullUrl)
+	logger.Debug("Generated URL: ", fullUrl)
 	return fullUrl
 }
 
-func retrieveQueryResponse(url *url.URL) (InstantVectorObject, error) {
+func retrieveInstantQueryResponse(url *url.URL) (InstantVectorObject, error) {
 	response, _ := doRequest(url.String())
 	data := InstantVectorObject{}
 	err := json.Unmarshal(response, &data)
-	if data.Status == SUCCESS {
-		if data.Data.ResultType == VECTOR {
+	if data.Status == Success {
+		if data.Data.ResultType == Vector {
 			return data, nil
 		} else {
 			return InstantVectorObject{}, err
 		}
-	} else if data.Status == FAIL {
+	} else if data.Status == Fail {
 		log.Fatalf("Prometheus query to %s with %s failed with %s", url.Path, url.RawQuery, data.Status)
 		return InstantVectorObject{}, err
 	} else if err != nil {
@@ -97,39 +108,37 @@ func retrieveQueryResponse(url *url.URL) (InstantVectorObject, error) {
 	return InstantVectorObject{}, err
 }
 
-func query(queryString string, timePoint float64) InstantVectorObject {
+func instantQuery(queryString string, timePoint float64) InstantVectorObject {
 	queryStringParams := url.Values{}
 	queryStringParams.Set("query", queryString)
 	queryStringParams.Set("time", strconv.FormatFloat(timePoint, 'f', -1, 64))
 	query := queryStringParams.Encode()
 	targetParams := retrieveTargetParameters(SINGLE, query)
-	res, _ := retrieveQueryResponse(targetParams)
+	res, _ := retrieveInstantQueryResponse(targetParams)
 	return res
 }
 
-func retrieveRangeQueryResponse(url *url.URL) (RangeVectorObject, error) {
+func retrieveGenericRangeQueryResponse(url *url.URL) (GenericRangeVector, error) {
 	response, _ := doRequest(url.String())
-	data := RangeVectorObject{}
+	var data GenericRangeVector
 	err := json.Unmarshal(response, &data)
-	if data.Status == SUCCESS {
-		if data.Data.ResultType == MATRIX {
+	if data.Status == Success {
+		if data.Data.ResultType == Matrix {
 			return data, nil
 		} else {
-			return RangeVectorObject{}, err
+			return GenericRangeVector{}, err
 		}
-	} else if data.Status == FAIL {
+	} else if data.Status == Fail {
 		log.Fatalf("Prometheus query to %s with %s failed with %s", url.Path, url.RawQuery, data.Status)
-		return RangeVectorObject{}, err
+		return GenericRangeVector{}, err
 	} else if err != nil {
 		log.Fatalf("Query error %v", err)
-		return RangeVectorObject{}, err
+		return GenericRangeVector{}, err
 	}
-	return RangeVectorObject{}, err
+	return GenericRangeVector{}, err
 }
 
-// @param step: interval (ex: every x minutes)
-// TODO: refactor func args to float64
-func rangeQuery(queryString string, startTime int64, endTime int64, step int) RangeVectorObject {
+func rangeGenericQuery(queryString string, startTime int64, endTime int64, step int) GenericRangeVector {
 	qsParams := url.Values{}
 	qsParams.Set("query", queryString)
 	qsParams.Set("start", strconv.FormatInt(startTime, 10))
@@ -137,28 +146,28 @@ func rangeQuery(queryString string, startTime int64, endTime int64, step int) Ra
 	qsParams.Set("step", strconv.Itoa(step))
 	query := qsParams.Encode()
 	targetParams := retrieveTargetParameters(RANGE, query)
-	res, err := retrieveRangeQueryResponse(targetParams)
-	if err != nil {
-		return res
-	} else {
-		log.Println("error range query", err)
-		return RangeVectorObject{}
-	}
+	// TODO: Be careful of error handling here. it returned empty response.
+	res, _ := retrieveGenericRangeQueryResponse(targetParams)
+	return res
 }
 
+// TODO: Improve error handling
 func doRequest(url string) ([]byte, error) {
 	resp, err := http.Get(url)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		log.Fatalf("Error %v", err)
+	if err != nil {
+		// set logger to Printf because using Panic or Fatal will cause the Docker Container to stop
+		log.Printf("Req Error %v", err)
 		return nil, err
+	} else if resp.StatusCode != http.StatusOK {
+		logger.Debug("Bad request. Status code ", resp.StatusCode)
 	}
 	resp.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 	defer resp.Body.Close()
 
-	body, err1 := ioutil.ReadAll(resp.Body)
-	if err1 != nil {
-		log.Fatalf("Error %v", err1)
-		return nil, err1
+	body, readErr := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("ioutil read error %v", readErr)
+		return nil, err
 	}
 	return body, nil
 }
@@ -166,37 +175,23 @@ func doRequest(url string) ([]byte, error) {
 func callSingleQuery(singleQueryOp chan float64, metric string) {
 	timeNow := time.Now()
 	endTimeUnix := timeNow.Unix()
-	singleQuery := query(metric, float64(endTimeUnix))
+	singleQuery := instantQuery(metric, float64(endTimeUnix))
 	firstValue, err := extractFirstValueFromSingleQuery(singleQuery)
-	log.Println(err)
-	log.Println("First value: ", firstValue)
+	if err != nil {
+		logger.Debug(err)
+	}
 	singleQueryOp <- firstValue
 }
 
-func callRangeQuery(rangeQueryOp chan KvMap, metric string) {
+func callGenericRangeQuery(rangeQueryOp chan KvMap, metric string, timeRange time.Duration, statType string, label string, firstValue bool) {
 	timeNow := time.Now()
 	endTimeUnix := timeNow.Unix()
-	startTimeUnix := timeNow.Add(-time.Minute * 30).Unix() // 30 minutes earlier
-	matrixQuery := rangeQuery(metric, startTimeUnix, endTimeUnix, 7)
-	firstValQueryRange, _ := extractFirstValueFromQueryRange(matrixQuery)
-	log.Print("First value of query range: ", firstValQueryRange)
-	stats, _ := extractStatisticFromQueryRange(matrixQuery, MAX, INSTANCE)
+	startTimeUnix := timeNow.Add(-time.Minute * timeRange).Unix() // x minutes earlier
+	matrixQuery := rangeGenericQuery(metric, startTimeUnix, endTimeUnix, 7)
+	if firstValue == true {
+		firstValQueryRange, _ := extractFirstValueFromGenericQueryRange(matrixQuery)
+		log.Print("First value of query range: ", firstValQueryRange)
+	}
+	stats, _ := extractStatisticFromGenericQueryRange(matrixQuery, statType, label)
 	rangeQueryOp <- stats
-}
-
-func execProm(metric string) {
-	vector := make(chan float64)
-	matrix := make(chan KvMap)
-	go callSingleQuery(vector, metric)
-	go callRangeQuery(matrix, metric)
-	singleQuery, rangeQuery := <-vector, <-matrix
-	singleQuery1, rangeQuery1 := <-vector, <-matrix
-	fmt.Println("Final output SINGLE query ", singleQuery, singleQuery1)
-	fmt.Println("Final output RANGE query ", rangeQuery, rangeQuery1)
-}
-
-func Main() {
-	st := State{HealthEndpoint: "http://localhost:9090/-/healthy", Metric: "ledger_transaction_count"}
-	defer st.Run()
-	go fmt.Println("Continues...")
 }

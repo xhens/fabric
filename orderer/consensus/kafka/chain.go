@@ -9,6 +9,7 @@ package kafka
 import (
 	"context"
 	"fmt"
+	"github.com/hyperledger/fabric/orderer/common/prometheus"
 	"strconv"
 	"sync"
 	"time"
@@ -615,7 +616,7 @@ func (chain *chainImpl) processRegular(regularMessage *ab.KafkaMessageRegular, r
 	// - if the message is re-validated and re-ordered, this value should be the `OriginalOffset` of that
 	//   Kafka message, so that `lastOriginalOffsetProcessed` is advanced
 	commitNormalMsg := func(message *cb.Envelope, newOffset int64) {
-		batches, pending := chain.BlockCutter().Ordered(message)
+		batches, pending := chain.BlockCutter().Ordered(message, &prometheus.Controller{})
 		logger.Debugf("[channel: %s] Ordering results: items in batch = %d, pending = %v", chain.ChannelID(), len(batches), pending)
 
 		switch {

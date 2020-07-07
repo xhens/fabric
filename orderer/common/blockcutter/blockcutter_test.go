@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package blockcutter_test
 
 import (
+	"fmt"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -52,6 +53,7 @@ var _ = Describe("Blockcutter", func() {
 			})
 
 			message = &cb.Envelope{Payload: []byte("Twenty Bytes of Data"), Signature: []byte("Twenty Bytes of Data")}
+			fmt.Println("MEssage ", message)
 		})
 
 		It("adds the message to the pending batches", func() {
