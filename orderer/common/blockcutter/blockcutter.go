@@ -9,7 +9,6 @@ package blockcutter
 import (
 	"fmt"
 	"github.com/hyperledger/fabric/orderer/common/prometheus"
-	"math/rand"
 	"time"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -23,16 +22,12 @@ type OrdererConfigFetcher interface {
 	OrdererConfig() (channelconfig.Orderer, bool)
 }
 
-type ControllerDataFetcher interface {
-	ControllerConfig() (prometheus.ControllerInterface, bool)
-}
-
 // Receiver defines a sink for the ordered broadcast messages
 type Receiver interface {
 	// Ordered should be invoked sequentially as messages are ordered
 	// Each batch in `messageBatches` will be wrapped into a block.
 	// `pending` indicates if there are still messages pending in the receiver.
-	Ordered(msg *cb.Envelope, controller *prometheus.Controller) (messageBatches [][]*cb.Envelope, pending bool)
+	Ordered(msg *cb.Envelope, controller *prometheus.ControllerStruct) (messageBatches [][]*cb.Envelope, pending bool)
 
 	// Cut returns the current batch and starts a new one
 	Cut() []*cb.Envelope
@@ -57,12 +52,6 @@ func NewReceiverImpl(channelID string, sharedConfigFetcher OrdererConfigFetcher,
 	}
 }
 
-func randU32(min, max uint32) uint32 {
-	var a = rand.Uint32()
-	a %= max - min
-	a += min
-	return a
-}
 
 // Ordered should be invoked sequentially as messages are ordered
 //
@@ -80,7 +69,7 @@ func randU32(min, max uint32) uint32 {
 //   - impossible
 //
 // Note that messageBatches can not be greater than 2.
-func (r *receiver) Ordered(msg *cb.Envelope, controller *prometheus.Controller) (messageBatches [][]*cb.Envelope, pending bool) {
+func (r *receiver) Ordered(msg *cb.Envelope, controller *prometheus.ControllerStruct) (messageBatches [][]*cb.Envelope, pending bool) {
 	if len(r.pendingBatch) == 0 {
 		// We are beginning a new batch, mark the time
 		r.PendingBatchStartTime = time.Now()
@@ -96,13 +85,13 @@ func (r *receiver) Ordered(msg *cb.Envelope, controller *prometheus.Controller) 
 	bytes := messageSizeBytes(msg)
 
 	// TODO: First Condition
+	// TODO: replace prints with logs.
 	if bytes > batchSize.PreferredMaxBytes {
 		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), prometheus.PreferredMaxBytes, bytes)
 		if ok == true {
 			ordererConfig.BatchSize().PreferredMaxBytes = newBatchSize.PreferredMaxBytes
 			fmt.Println("Updated attribute: ", ordererConfig.BatchSize().PreferredMaxBytes)
 		}
-		// TODO: increase max bytes on next iteration (?maybe)
 		fmt.Println("Message Size Bytes larger than preferred max bytes ", bytes)
 		logger.Debugf("The current message, with %v bytes, is larger than the preferred batch size of %v bytes and will be isolated.", bytes, batchSize.PreferredMaxBytes)
 		fmt.Println("size bytes pending batch ", r.pendingBatchSizeBytes)
@@ -113,7 +102,6 @@ func (r *receiver) Ordered(msg *cb.Envelope, controller *prometheus.Controller) 
 			fmt.Println("cutting message batch ", messageBatch)
 			messageBatches = append(messageBatches, messageBatch)
 		}
-		// TODO: increase PreferredMaxBytes batch size here (going to be used in the next block cut)
 
 		// create new batch with single message
 		messageBatches = append(messageBatches, []*cb.Envelope{msg})
@@ -152,8 +140,6 @@ func (r *receiver) Ordered(msg *cb.Envelope, controller *prometheus.Controller) 
 		messageBatches = append(messageBatches, messageBatch)
 		fmt.Println("message batch just cut", "MESSAGE BATCHES LENGTH", len(messageBatches)) //TODO: Output length
 		pending = false
-		// TODO: Increase MaxMessageCount on next iteration
-
 	}
 	return
 }
@@ -172,9 +158,4 @@ func (r *receiver) Cut() []*cb.Envelope {
 
 func messageSizeBytes(message *cb.Envelope) uint32 {
 	return uint32(len(message.Payload) + len(message.Signature))
-}
-
-func customMessageSizeBytes(message *cb.Envelope) uint32 {
-	fmt.Println(uint32(len(message.Payload)-len(message.Signature)), "KB")
-	return uint32(len(message.Payload) - len(message.Signature))
 }

@@ -30,8 +30,6 @@ var logger = flogging.MustGetLogger("localconfig")
 // modify the default mapping, see the "Unmarshal"
 // section of https://github.com/spf13/viper for more info.
 
-// TODO: define the added configuration (for the controller) to be read from the orderer config YAML.
-// E.g., deliver_blocks_sent to be monitored & controlled.
 type TopLevel struct {
 	General              General
 	FileLedger           FileLedger

@@ -626,8 +626,8 @@ func (c *Chain) run() {
 		StatType:   prometheus.Max,
 	}
 	go ledgerTransactionCount.Run()
-	// controller := &prometheus.Controller{FirstMetric: &ledgerTransactionCount, SaturationPoint: 15}
-	controller := prometheus.NewControllerWithSingleMetric(&ledgerTransactionCount, 10)
+	// controller := &prometheus.controller{FirstMetric: &ledgerTransactionCount, SaturationPoint: 15}
+	controller := prometheus.NewController(&ledgerTransactionCount, 10)
 	if controller.FirstMetric.Value > float64(controller.SaturationPoint) {
 		controller.CurrentValue = controller.FirstMetric.Value
 	}
@@ -834,7 +834,7 @@ func (c *Chain) writeBlock(block *common.Block, index uint64) {
 //   -- pending bool; if there are envelopes pending to be ordered,
 //   -- err error; the error encountered, if any.
 // It takes care of config messages as well as the revalidation of messages if the config sequence has advanced.
-func (c *Chain) ordered(msg *orderer.SubmitRequest, controller *prometheus.Controller) (batches [][]*common.Envelope, pending bool, err error) {
+func (c *Chain) ordered(msg *orderer.SubmitRequest, controller *prometheus.ControllerStruct) (batches [][]*common.Envelope, pending bool, err error) {
 	seq := c.support.Sequence()
 
 	if c.isConfig(msg.Payload) {

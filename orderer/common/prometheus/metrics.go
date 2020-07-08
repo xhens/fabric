@@ -4,7 +4,7 @@ import "github.com/hyperledger/fabric/common/metrics"
 
 var (
 	preferredMaxBytesBatchSize = metrics.GaugeOpts{
-		Namespace:    "controller",
+		Namespace:    "ControllerStruct",
 		Name:         "batch_size_preferred_max_bytes",
 		Help:         "Size of the batch.",
 		LabelNames:   []string{"channel"},
@@ -12,7 +12,7 @@ var (
 	}
 
 	maxMessageCountBatchSize = metrics.GaugeOpts{
-		Namespace:    "controller",
+		Namespace:    "ControllerStruct",
 		Name:         "batch_size_max_message_count",
 		Help:         "Size of the batch.",
 		LabelNames:   []string{"channel"},
@@ -20,7 +20,7 @@ var (
 	}
 
 	absoluteMaxBytesBatchSize = metrics.GaugeOpts{
-		Namespace:    "controller",
+		Namespace:    "ControllerStruct",
 		Name:         "batch_size_absolute_max_bytes",
 		Help:         "Size of the batch.",
 		LabelNames:   []string{"channel"},

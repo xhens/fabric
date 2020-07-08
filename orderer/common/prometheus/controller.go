@@ -3,25 +3,20 @@ package prometheus
 import (
 	"fmt"
 	"github.com/hyperledger/fabric-protos-go/orderer"
-	"github.com/hyperledger/fabric/common/metrics"
-	"time"
 )
 
-type ControllerInterface interface {
-	getMetricValue() float64
-	Run()
-	SuggestNewBlockSize()
-	ControllerState() *MetricMonitor
+// create the Controller interface. Use methods to get the values from the struct, etc,.
+type Controller interface {
+	Run(batchSize *orderer.BatchSize, changingAttribute string, size uint32) (*ControllerBlock, bool)
 }
 
-type Controller struct {
+// Rename to ControllerStruct and export it because it is being used in Blockcutter and other components
+type ControllerStruct struct {
 	FirstMetric         *MetricMonitor
 	SaturationPoint     uint32
 	CurrentValue        float64
 	LastValue           float64
 	SuggestedBlockValue *ControllerBlock
-	Metrics             *MetricsController
-	MetricProvider      metrics.Provider
 }
 
 type ControllerBlock struct {
@@ -30,9 +25,9 @@ type ControllerBlock struct {
 	MaxMessageCount   uint32
 }
 
-func NewControllerWithSingleMetric(firstMetric *MetricMonitor, SaturationPoint uint32) *Controller {
-	return &Controller{
-		FirstMetric:         firstMetric,
+func NewController(metric *MetricMonitor, SaturationPoint uint32) *ControllerStruct {
+	return &ControllerStruct{
+		FirstMetric:         metric,
 		SaturationPoint:     SaturationPoint,
 		CurrentValue:        0,
 		LastValue:           0,
@@ -40,49 +35,25 @@ func NewControllerWithSingleMetric(firstMetric *MetricMonitor, SaturationPoint u
 	}
 }
 
-func (c *Controller) ControllerState() *MetricMonitor {
-	return c.FirstMetric
-}
-
-func (c *Controller) getMetricValue() float64 {
-	fmt.Println("this ", c.FirstMetric.Value)
-	return c.FirstMetric.Value
-}
-
-func (c *Controller) Run(batchSize *orderer.BatchSize, changingAttribute string, size uint32) (*ControllerBlock, bool) {
-	fmt.Println("Controller running")
+func (c *ControllerStruct) Run(batchSize *orderer.BatchSize, changingAttribute string, size uint32) (*ControllerBlock, bool) {
+	fmt.Println("ControllerStruct running")
 	if c.FirstMetric != nil {
 		fmt.Println(float64(c.SaturationPoint))
 		fmt.Println("First metric: ", c.FirstMetric.Value, " Saturation point: ", c.SaturationPoint)
 		if changingAttribute == PreferredMaxBytes {
 			if c.FirstMetric.Value < float64(c.SaturationPoint) {
-				fmt.Println("first condition")
 				newSize := size
-				// c.Metrics.PreferredMaxBytes.Add(float64(newSize))
 				return &ControllerBlock{PreferredMaxBytes: newSize}, true
 			} else if c.FirstMetric.Value > float64(c.SaturationPoint) {
-				/*labels := []string{
-					"channel", changingAttribute,
-				}*/
 				newSize := batchSize.PreferredMaxBytes + (batchSize.PreferredMaxBytes * 10 / 100)
-				// c.Metrics.PreferredMaxBytes.With(labels...).Add(float64(newSize))
 				return &ControllerBlock{PreferredMaxBytes: newSize}, true
 			}
 		} else if changingAttribute == AbsoluteMaxBytes {
 			fmt.Println("second condition")
-			/*			labels := []string{
-						"channel", changingAttribute,
-					}*/
 			newSize := batchSize.AbsoluteMaxBytes + (batchSize.AbsoluteMaxBytes * 5 / 100)
-			//c.Metrics.PreferredMaxBytes.With(labels...).Add(float64(newSize))
 			return &ControllerBlock{AbsoluteMaxBytes: newSize}, true
 		} else if changingAttribute == MaxMessageCount {
-			fmt.Println("third condition")
-			/*			labels := []string{
-						"channel", changingAttribute,
-					}*/
 			newSize := batchSize.MaxMessageCount + 1
-			//c.Metrics.PreferredMaxBytes.With(labels...).Add(float64(newSize))
 			return &ControllerBlock{MaxMessageCount: newSize}, true
 		}
 	}
@@ -92,23 +63,4 @@ func (c *Controller) Run(batchSize *orderer.BatchSize, changingAttribute string,
 		AbsoluteMaxBytes:  batchSize.AbsoluteMaxBytes,
 		MaxMessageCount:   batchSize.MaxMessageCount,
 	}, false
-}
-
-func (c *Controller) SuggestNewBlockSize() {
-	fmt.Println("Controller running... ")
-	go func() {
-		ticker := time.NewTicker(pollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if c.FirstMetric != nil {
-					if c.FirstMetric.Value < float64(c.SaturationPoint) {
-						cb := ControllerBlock{PreferredMaxBytes: 24 * 1024}
-						fmt.Println("CB: ", cb)
-					}
-				}
-			}
-		}
-	}()
 }

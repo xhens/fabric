@@ -8,8 +8,6 @@ package etcdraft
 
 import (
 	"bytes"
-	"fmt"
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
 	"github.com/hyperledger/fabric/orderer/consensus/follower"
 	"path"
 	"reflect"
@@ -305,8 +303,6 @@ func New(
 	if err != nil {
 		logger.Panicf("Failed to decode etcdraft configuration: %s", err)
 	}
-	controller := prometheus.Controller{Metrics: prometheus.NewMetrics(metricsProvider)}
-	fmt.Println("Prometheus Controller init... ", controller.Metrics)
 
 	consenter := &Consenter{
 		CreateChain:           r.CreateChain,

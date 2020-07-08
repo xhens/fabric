@@ -124,7 +124,7 @@ func (ch *chain) main() {
 						continue
 					}
 				}
-				batches, pending := ch.support.BlockCutter().Ordered(msg.normalMsg, &prometheus.Controller{})
+				batches, pending := ch.support.BlockCutter().Ordered(msg.normalMsg, &prometheus.ControllerStruct{})
 
 				for _, batch := range batches {
 					block := ch.support.CreateNextBlock(batch)

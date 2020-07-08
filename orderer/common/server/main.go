@@ -84,17 +84,6 @@ func Main() {
 		os.Exit(1)
 	}
 
-/*	LedgerTransactionCount := prometheus.MetricMonitor{
-		Metric:     "rate(ledger_transaction_count[1m])",
-		MetricType: prometheus.Matrix,
-		Label:      prometheus.Chaincode,
-		StatType:   prometheus.Max,
-	}
-	go LedgerTransactionCount.Run()*/
-
-	// go mainController.SuggestNewBlockSize()
-
-	// deliverBlocksSent := prometheus.MetricMonitor{Metric: prometheus.DeliverBLocksSent, MetricType: prometheus.Matrix, Label: prometheus.BlockDataType, StatType: prometheus.Max}
 	initializeLogging()
 	prettyPrintStruct(conf)
 
