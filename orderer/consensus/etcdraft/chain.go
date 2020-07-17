@@ -625,11 +625,12 @@ func (c *Chain) run() {
 		Label:      prometheus.Chaincode,
 		StatType:   prometheus.Max,
 	}
-	go ledgerTransactionCount.Run()
-	// controller := &prometheus.controller{FirstMetric: &ledgerTransactionCount, SaturationPoint: 15}
-	controller := prometheus.NewController(&ledgerTransactionCount, 10)
-	if controller.FirstMetric.Value > float64(controller.SaturationPoint) {
-		controller.CurrentValue = controller.FirstMetric.Value
+	// go ledgerTransactionCount.Run()
+	controller := prometheus.NewController(&ledgerTransactionCount, 5, 13)
+	if controller.FirstMetric != nil {
+		if controller.FirstMetric.Value > float64(controller.SaturationPoint) {
+			controller.CurrentValue = controller.FirstMetric.Value
+		}
 	}
 
 	for {

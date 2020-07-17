@@ -11,7 +11,6 @@ import (
 // Used only in Fabric (not in this repo)
 var logger = flogging.MustGetLogger("orderer.common.prometheus")
 
-// TODO: Some of these constants might need to be variables
 const (
 	numPollers     = 2                // number of Poller goroutines to launch
 	pollInterval   = 4 * time.Second  // how often to poll each URL
@@ -133,26 +132,6 @@ func (metricMonitor *MetricMonitor) executeQuery() {
 		log.Println("Unknown structure type")
 	}
 	// return 0
-}
-
-func (metricMonitor *MetricMonitor) RunOnce() float64 {
-	pending, complete := make(chan *Resource), make(chan *Resource)
-	var metricValue float64
-	if metricMonitor.Healthy == true {
-		metricMonitor.executeQuery()
-		metricValue = metricMonitor.Value
-		fmt.Println(metricMonitor.Value)
-		return metricValue
-	} else {
-		fmt.Println("Waiting to recover...")
-	}
-	status := metricMonitor.stateMonitor(statusInterval, successTimeout)
-	go metricMonitor.poller(pending, complete, status)
-	pending <- &Resource{url: HealthEndpoint}
-	for r := range complete {
-		go r.sleep(pending)
-	}
-	return metricValue
 }
 
 func (metricMonitor *MetricMonitor) Run() float64{

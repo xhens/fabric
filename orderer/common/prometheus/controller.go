@@ -14,6 +14,7 @@ type Controller interface {
 type ControllerStruct struct {
 	FirstMetric         *MetricMonitor
 	SaturationPoint     uint32
+	MaxSaturationPoint  uint32
 	CurrentValue        float64
 	LastValue           float64
 	SuggestedBlockValue *ControllerBlock
@@ -25,10 +26,11 @@ type ControllerBlock struct {
 	MaxMessageCount   uint32
 }
 
-func NewController(metric *MetricMonitor, SaturationPoint uint32) *ControllerStruct {
+func NewController(metric *MetricMonitor, SaturationPoint uint32, MaxSaturationPoint uint32) *ControllerStruct {
 	return &ControllerStruct{
 		FirstMetric:         metric,
 		SaturationPoint:     SaturationPoint,
+		MaxSaturationPoint:  MaxSaturationPoint,
 		CurrentValue:        0,
 		LastValue:           0,
 		SuggestedBlockValue: nil,
@@ -42,10 +44,13 @@ func (c *ControllerStruct) Run(batchSize *orderer.BatchSize, changingAttribute s
 		fmt.Println("First metric: ", c.FirstMetric.Value, " Saturation point: ", c.SaturationPoint)
 		if changingAttribute == PreferredMaxBytes {
 			if c.FirstMetric.Value < float64(c.SaturationPoint) {
+				newSize := batchSize.PreferredMaxBytes + (batchSize.PreferredMaxBytes * 20 / 100)
+				return &ControllerBlock{PreferredMaxBytes: newSize}, true
+			} else if c.FirstMetric.Value > float64(c.SaturationPoint) && c.FirstMetric.Value < float64(c.MaxSaturationPoint) {
 				newSize := size
 				return &ControllerBlock{PreferredMaxBytes: newSize}, true
-			} else if c.FirstMetric.Value > float64(c.SaturationPoint) {
-				newSize := batchSize.PreferredMaxBytes + (batchSize.PreferredMaxBytes * 10 / 100)
+			} else if c.FirstMetric.Value > float64(c.MaxSaturationPoint) {
+				newSize := batchSize.PreferredMaxBytes - (batchSize.PreferredMaxBytes * 10 / 100)
 				return &ControllerBlock{PreferredMaxBytes: newSize}, true
 			}
 		} else if changingAttribute == AbsoluteMaxBytes {
