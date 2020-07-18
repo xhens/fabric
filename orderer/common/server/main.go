@@ -60,10 +60,10 @@ var logger = flogging.MustGetLogger("orderer.common.server")
 
 //command line flags
 var (
-	app = kingpin.New("orderer", "Hyperledger Fabric orderer node")
+	app = kingpin.New("orderer", "Xhens Mod - Hyperledger Fabric orderer node")
 
-	_       = app.Command("start", "Start the orderer node").Default() // preserved for cli compatibility
-	version = app.Command("version", "Show version information")
+	_       = app.Command("start", "X - Start the orderer node").Default() // preserved for cli compatibility
+	version = app.Command("version", "X - Show version information!!!")
 
 	clusterTypes = map[string]struct{}{"etcdraft": {}}
 )
@@ -84,7 +84,7 @@ func Main() {
 		os.Exit(1)
 	}
 	initializeLogging()
-
+	getBlockSizeTest()
 	prettyPrintStruct(conf)
 
 	cryptoProvider := factory.GetDefault()

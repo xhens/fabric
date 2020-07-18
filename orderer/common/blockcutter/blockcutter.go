@@ -12,6 +12,7 @@ import (
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/orderer/common/prometheus"
 )
 
 var logger = flogging.MustGetLogger("orderer.common.blockcutter")
@@ -77,7 +78,8 @@ func (r *receiver) Ordered(msg *cb.Envelope) (messageBatches [][]*cb.Envelope, p
 		logger.Panicf("Could not retrieve orderer config to query batch parameters, block cutting is not possible")
 	}
 
-	batchSize := ordererConfig.BatchSize()
+	prometheus.Main()
+	batchSize := ordererConfig.BatchSize() // TODO: replace the static with a dynamic version (batch, block size)
 
 	messageSizeBytes := messageSizeBytes(msg)
 	if messageSizeBytes > batchSize.PreferredMaxBytes {
