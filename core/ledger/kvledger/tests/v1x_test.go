@@ -241,7 +241,7 @@ func TestV13WithStateCouchdb(t *testing.T) {
 
 	couchdbConfig, cleanup := startCouchDBWithV13Data(t, ledgerFSRoot)
 	defer cleanup()
-	env.initializer.Config.StateDBConfig.StateDatabase = "CouchDB"
+	env.initializer.Config.StateDBConfig.StateDatabase = ledger.CouchDB
 	env.initializer.Config.StateDBConfig.CouchDB = couchdbConfig
 	env.initializer.HealthCheckRegistry = &mock.HealthCheckRegistry{}
 	env.initializer.ChaincodeLifecycleEventProvider = &mock.ChaincodeLifecycleEventProvider{}
@@ -293,7 +293,7 @@ func TestInitLedgerPanicWithV13Data(t *testing.T) {
 
 	couchdbConfig, cleanup := startCouchDBWithV13Data(t, ledgerFSRoot)
 	defer cleanup()
-	env.initializer.Config.StateDBConfig.StateDatabase = "CouchDB"
+	env.initializer.Config.StateDBConfig.StateDatabase = ledger.CouchDB
 	env.initializer.Config.StateDBConfig.CouchDB = couchdbConfig
 	env.initializer.HealthCheckRegistry = &mock.HealthCheckRegistry{}
 	env.initializer.ChaincodeLifecycleEventProvider = &mock.ChaincodeLifecycleEventProvider{}
@@ -381,8 +381,8 @@ func startCouchDBWithV13Data(t *testing.T, ledgerFSRoot string) (*ledger.CouchDB
 	// set required config data to use state couchdb
 	couchdbConfig := &ledger.CouchDBConfig{
 		Address:             couchAddress,
-		Username:            "",
-		Password:            "",
+		Username:            "admin",
+		Password:            "adminpw",
 		MaxRetries:          3,
 		MaxRetriesOnStartup: 3,
 		RequestTimeout:      10 * time.Second,

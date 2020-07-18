@@ -8,7 +8,8 @@ package etcdraft
 
 import (
 	"bytes"
-	"github.com/hyperledger/fabric/orderer/consensus/follower"
+	"github.com/hyperledger/fabric/common/channelconfig"
+	"github.com/hyperledger/fabric/protoutil"
 	"path"
 	"reflect"
 	"time"
@@ -160,14 +161,14 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 	id, err := c.detectSelfID(consenters)
 	if err != nil {
 		if c.InactiveChainRegistry != nil {
+			// There is a system channel, use the InactiveChainRegistry to track the future config updates of application channel.
 			c.InactiveChainRegistry.TrackChain(support.ChannelID(), support.Block(0), func() {
 				c.CreateChain(support.ChannelID())
 			})
 			return &inactive.Chain{Err: errors.Errorf("channel %s is not serviced by me", support.ChannelID())}, nil
-		} else {
-			//TODO fully construct a follower chain
-			return &follower.Chain{Err: errors.Errorf("orderer is a follower of channel %s", support.ChannelID())}, nil
 		}
+
+		return nil, errors.Wrap(err, "without a system channel, a follower should have been created")
 	}
 
 	var evictionSuspicion time.Duration
@@ -249,15 +250,45 @@ func (c *Consenter) HandleChain(support consensus.ConsenterSupport, metadata *co
 		},
 		func() {
 			c.Logger.Warning("Start a follower.Chain: not yet implemented")
-			//TODO start follower.Chain
+			//TODO plug a function pointer to start follower.Chain
 		},
 		nil,
 	)
 }
 
-func (c *Consenter) JoinChain(support consensus.ConsenterSupport, joinBlock *common.Block) (consensus.Chain, error) {
-	//TODO fully construct a follower.Chain
-	return nil, errors.New("not implemented")
+func (c *Consenter) IsChannelMember(joinBlock *common.Block) (bool, error) {
+	if joinBlock == nil {
+		return false, errors.New("nil block")
+	}
+	envelopeConfig, err := protoutil.ExtractEnvelope(joinBlock, 0)
+	if err != nil {
+		return false, err
+	}
+	bundle, err := channelconfig.NewBundleFromEnvelope(envelopeConfig, c.BCCSP)
+	if err != nil {
+		return false, err
+	}
+	oc, exists := bundle.OrdererConfig()
+	if !exists {
+		return false, errors.New("no orderer config in bundle")
+	}
+	configMetadata := &etcdraft.ConfigMetadata{}
+	if err := proto.Unmarshal(oc.ConsensusMetadata(), configMetadata); err != nil {
+		return false, err
+	}
+	if err := CheckConfigMetadata(configMetadata); err != nil {
+		return false, err
+	}
+
+	member := false
+	for _, consenter := range configMetadata.Consenters {
+		if bytes.Equal(c.Cert, consenter.ServerTlsCert) || bytes.Equal(c.Cert, consenter.ClientTlsCert) {
+			member = true
+			break
+		}
+	}
+
+	return member, nil
 }
 
 // ReadBlockMetadata attempts to read raft metadata from block metadata, if available.

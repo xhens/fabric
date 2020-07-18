@@ -20,7 +20,6 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/statecouchdb"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/statedb/stateleveldb"
 	"github.com/hyperledger/fabric/core/ledger/mock"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,6 +28,7 @@ type TestEnv interface {
 	StartExternalResource()
 	Init(t testing.TB)
 	GetDBHandle(id string) *DB
+	GetProvider() *DBProvider
 	GetName() string
 	DBValueFormat() byte
 	DecodeDBValue(dbVal []byte) statedb.VersionedValue
@@ -67,7 +67,7 @@ func (env *LevelDBTestEnv) Init(t testing.TB) {
 		},
 		[]string{"lscc", "_lifecycle"},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	env.t = t
 	env.provider = dbProvider
 	env.dbPath = dbPath
@@ -86,8 +86,13 @@ func (env *LevelDBTestEnv) StopExternalResource() {
 // GetDBHandle implements corresponding function from interface TestEnv
 func (env *LevelDBTestEnv) GetDBHandle(id string) *DB {
 	db, err := env.provider.GetDBHandle(id, nil)
-	assert.NoError(env.t, err)
+	require.NoError(env.t, err)
 	return db
+}
+
+// GetProvider returns DBProvider
+func (env *LevelDBTestEnv) GetProvider() *DBProvider {
+	return env.provider
 }
 
 // GetName implements corresponding function from interface TestEnv
@@ -154,11 +159,11 @@ func (env *CouchDBTestEnv) Init(t testing.TB) {
 
 	stateDBConfig := &StateDBConfig{
 		StateDBConfig: &ledger.StateDBConfig{
-			StateDatabase: "CouchDB",
+			StateDatabase: ledger.CouchDB,
 			CouchDB: &ledger.CouchDBConfig{
 				Address:             env.couchAddress,
-				Username:            "",
-				Password:            "",
+				Username:            "admin",
+				Password:            "adminpw",
 				MaxRetries:          3,
 				MaxRetriesOnStartup: 20,
 				RequestTimeout:      35 * time.Second,
@@ -178,7 +183,7 @@ func (env *CouchDBTestEnv) Init(t testing.TB) {
 		stateDBConfig,
 		[]string{"lscc", "_lifecycle"},
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	env.provider = dbProvider
 	env.redoPath = redoPath
 	env.couchDBConfig = stateDBConfig.CouchDB
@@ -187,8 +192,13 @@ func (env *CouchDBTestEnv) Init(t testing.TB) {
 // GetDBHandle implements corresponding function from interface TestEnv
 func (env *CouchDBTestEnv) GetDBHandle(id string) *DB {
 	db, err := env.provider.GetDBHandle(id, &testmock.ChannelInfoProvider{})
-	assert.NoError(env.t, err)
+	require.NoError(env.t, err)
 	return db
+}
+
+// GetProvider returns DBProvider
+func (env *CouchDBTestEnv) GetProvider() *DBProvider {
+	return env.provider
 }
 
 // GetName implements corresponding function from interface TestEnv
@@ -211,7 +221,7 @@ func (env *CouchDBTestEnv) DecodeDBValue(dbVal []byte) statedb.VersionedValue {
 // Cleanup implements corresponding function from interface TestEnv
 func (env *CouchDBTestEnv) Cleanup() {
 	if env.provider != nil {
-		assert.NoError(env.t, statecouchdb.DropApplicationDBs(env.couchDBConfig))
+		require.NoError(env.t, statecouchdb.DropApplicationDBs(env.couchDBConfig))
 	}
 	os.RemoveAll(env.redoPath)
 	env.bookkeeperTestEnv.Cleanup()

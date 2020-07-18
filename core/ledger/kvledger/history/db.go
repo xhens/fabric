@@ -44,17 +44,21 @@ func NewDBProvider(path string) (*DBProvider, error) {
 }
 
 // GetDBHandle gets the handle to a named database
-func (p *DBProvider) GetDBHandle(name string) (*DB, error) {
+func (p *DBProvider) GetDBHandle(name string) *DB {
 	return &DB{
-			levelDB: p.leveldbProvider.GetDBHandle(name),
-			name:    name,
-		},
-		nil
+		levelDB: p.leveldbProvider.GetDBHandle(name),
+		name:    name,
+	}
 }
 
 // Close closes the underlying db
 func (p *DBProvider) Close() {
 	p.leveldbProvider.Close()
+}
+
+// Drop drops channel-specific data from the history db
+func (p *DBProvider) Drop(channelName string) error {
+	return p.leveldbProvider.Drop(channelName)
 }
 
 // DB maintains and provides access to history data for a particular channel
@@ -70,7 +74,7 @@ func (d *DB) Commit(block *common.Block) error {
 	//Set the starting tranNo to 0
 	var tranNo uint64
 
-	dbBatch := leveldbhelper.NewUpdateBatch()
+	dbBatch := d.levelDB.NewUpdateBatch()
 
 	logger.Debugf("Channel [%s]: Updating history database for blockNo [%v] with [%d] transactions",
 		d.name, blockNo, len(block.Data.Data))

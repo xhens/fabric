@@ -111,11 +111,11 @@ In that file, ACLs are expressed using the following format:
 
 ```
 # ACL policy for chaincode to chaincode invocation
-peer/ChaincodeToChaincode: /Channel/Application/Readers
+peer/ChaincodeToChaincode: /Channel/Application/Writers
 ```
 
 Where `peer/ChaincodeToChaincode` represents the resource being secured and
-`/Channel/Application/Readers` refers to the policy which must be satisfied for
+`/Channel/Application/Writers` refers to the policy which must be satisfied for
 the associated transaction to be considered valid.
 
 For a deeper dive into ACLS, refer to the topic in the Operations Guide on [ACLs](../access_control.html).
@@ -182,13 +182,13 @@ sign offs use the `ImplicitMeta` syntax.
 ### Signature policies
 
 `Signature` policies define specific types of users who must sign in order for a
-policy to be satisfied such as `Org1.Peer OR Org2.Peer`. These policies are
+policy to be satisfied such as `OR('Org1.peer', 'Org2.peer')`. These policies are
 considered the most versatile because they allow for the construction of
 extremely specific rules like: “An admin of org A and 2 other admins, or 5 of 6
 organization admins”. The syntax supports arbitrary combinations of `AND`, `OR`
-and `NOutOf`. For example, a policy can be easily expressed by using `AND
-(Org1, Org2)` which means that a signature from at least one member in Org1 AND
-one member in Org2 is required for the policy to be satisfied.
+and `NOutOf`. For example, a policy can be easily expressed by using
+`AND('Org1.member', 'Org2.member')` which means that a signature from at least
+one member in Org1 AND one member in Org2 is required for the policy to be satisfied.
 
 ### ImplicitMeta policies
 
