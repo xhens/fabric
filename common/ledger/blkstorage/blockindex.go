@@ -91,7 +91,7 @@ func (index *blockIndex) indexBlock(blockIdxInfo *blockIdxInfo) error {
 	blkNum := blockIdxInfo.blockNum
 	blkHash := blockIdxInfo.blockHash
 	txsfltr := txflags.ValidationFlags(blockIdxInfo.metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
-	batch := leveldbhelper.NewUpdateBatch()
+	batch := index.db.NewUpdateBatch()
 	flpBytes, err := flp.marshal()
 	if err != nil {
 		return err
@@ -228,7 +228,10 @@ func (index *blockIndex) getTxIDVal(txID string) (*TxIDIndexValue, error) {
 		return nil, ErrAttrNotIndexed
 	}
 	rangeScan := constructTxIDRangeScan(txID)
-	itr := index.db.GetIterator(rangeScan.startKey, rangeScan.stopKey)
+	itr, err := index.db.GetIterator(rangeScan.startKey, rangeScan.stopKey)
+	if err != nil {
+		return nil, errors.WithMessagef(err, "error while trying to retrieve transaction info by TXID [%s]", txID)
+	}
 	defer itr.Release()
 
 	present := itr.Next()
@@ -270,16 +273,15 @@ func (index *blockIndex) exportUniqueTxIDs(dir string, newHashFunc snapshot.NewH
 		return nil, ErrAttrNotIndexed
 	}
 
-	dbItr := index.db.GetIterator([]byte{txIDIdxKeyPrefix}, []byte{txIDIdxKeyPrefix + 1})
-	defer dbItr.Release()
-	if err := dbItr.Error(); err != nil {
-		return nil, errors.Wrap(err, "internal leveldb error while obtaining db iterator")
+	dbItr, err := index.db.GetIterator([]byte{txIDIdxKeyPrefix}, []byte{txIDIdxKeyPrefix + 1})
+	if err != nil {
+		return nil, err
 	}
+	defer dbItr.Release()
 
 	var previousTxID string
 	var numTxIDs uint64 = 0
 	var dataFile *snapshot.FileWriter
-	var err error
 	for dbItr.Next() {
 		if err := dbItr.Error(); err != nil {
 			return nil, errors.Wrap(err, "internal leveldb error while iterating for txids")
@@ -341,7 +343,6 @@ func importTxIDsFromSnapshot(
 	lastBlockNumInSnapshot uint64,
 	db *leveldbhelper.DBHandle) error {
 
-	batch := leveldbhelper.NewUpdateBatch()
 	txIDsMetadata, err := snapshot.OpenFile(filepath.Join(snapshotDir, snapshotMetadataFileName), snapshotFileFormat)
 	if err != nil {
 		return err
@@ -354,6 +355,8 @@ func importTxIDsFromSnapshot(
 	if err != nil {
 		return err
 	}
+
+	batch := db.NewUpdateBatch()
 	for i := uint64(0); i < numTxIDs; i++ {
 		txID, err := txIDsData.DecodeString()
 		if err != nil {
@@ -367,7 +370,7 @@ func importTxIDsFromSnapshot(
 			if err := db.WriteBatch(batch, true); err != nil {
 				return err
 			}
-			batch = leveldbhelper.NewUpdateBatch()
+			batch.Reset()
 		}
 	}
 	batch.Put(indexSavePointKey, encodeBlockNum(lastBlockNumInSnapshot))

@@ -49,6 +49,7 @@ type ChannelManagement interface {
 	ChannelInfo(channelID string) (types.ChannelInfo, error)
 
 	// JoinChannel instructs the orderer to create a channel and join it with the provided config block.
+	// The URL field is empty, and is to be completed by the caller.
 	JoinChannel(channelID string, configBlock *cb.Block, isAppChannel bool) (types.ChannelInfo, error)
 
 	// RemoveChannel instructs the orderer to remove a channel.
@@ -62,7 +63,6 @@ type HTTPHandler struct {
 	config    localconfig.ChannelParticipation
 	registrar ChannelManagement
 	router    *mux.Router
-	// TODO skeleton
 }
 
 func NewHTTPHandler(config localconfig.ChannelParticipation, registrar ChannelManagement) *HTTPHandler {
@@ -75,17 +75,18 @@ func NewHTTPHandler(config localconfig.ChannelParticipation, registrar ChannelMa
 
 	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveListOne).Methods(http.MethodGet)
 
-	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveJoin).Methods(http.MethodPost).HeadersRegexp(
-		"Content-Type", "multipart/form-data*")
-	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveBadContentType).Methods(http.MethodPost)
-
 	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveRemove).Methods(http.MethodDelete)
 	handler.router.HandleFunc(urlWithChannelIDKey, handler.serveNotAllowed)
 
-	handler.router.HandleFunc(URLBaseV1Channels, handler.serveListAll).Methods("GET")
+	handler.router.HandleFunc(URLBaseV1Channels, handler.serveListAll).Methods(http.MethodGet)
+
+	handler.router.HandleFunc(URLBaseV1Channels, handler.serveJoin).Methods(http.MethodPost).HeadersRegexp(
+		"Content-Type", "multipart/form-data*")
+	handler.router.HandleFunc(URLBaseV1Channels, handler.serveBadContentType).Methods(http.MethodPost)
+
 	handler.router.HandleFunc(URLBaseV1Channels, handler.serveNotAllowed)
 
-	handler.router.Handle(URLBaseV1, nil) //TODO redirect to URLBaseV1Channels
+	handler.router.HandleFunc(URLBaseV1, handler.redirectBaseV1).Methods(http.MethodGet)
 
 	return handler
 }
@@ -114,6 +115,7 @@ func (h *HTTPHandler) serveListAll(resp http.ResponseWriter, req *http.Request) 
 	for i, info := range channelList.Channels {
 		channelList.Channels[i].URL = path.Join(URLBaseV1Channels, info.Name)
 	}
+	resp.Header().Set("Cache-Control", "no-store")
 	h.sendResponseOK(resp, channelList)
 }
 
@@ -135,7 +137,14 @@ func (h *HTTPHandler) serveListOne(resp http.ResponseWriter, req *http.Request) 
 		h.sendResponseJsonError(resp, http.StatusNotFound, err)
 		return
 	}
+	infoFull.URL = path.Join(URLBaseV1Channels, infoFull.Name)
+
+	resp.Header().Set("Cache-Control", "no-store")
 	h.sendResponseOK(resp, infoFull)
+}
+
+func (h *HTTPHandler) redirectBaseV1(resp http.ResponseWriter, req *http.Request) {
+	http.Redirect(resp, req, URLBaseV1Channels, http.StatusFound)
 }
 
 // Join a channel.
@@ -144,11 +153,6 @@ func (h *HTTPHandler) serveJoin(resp http.ResponseWriter, req *http.Request) {
 	_, err := negotiateContentType(req) // Only application/json responses for now
 	if err != nil {
 		h.sendResponseJsonError(resp, http.StatusNotAcceptable, err)
-		return
-	}
-
-	channelID, err := h.extractChannelID(req, resp)
-	if err != nil {
 		return
 	}
 
@@ -163,28 +167,31 @@ func (h *HTTPHandler) serveJoin(resp http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	isAppChannel, err := ValidateJoinBlock(channelID, block)
+	channelID, isAppChannel, err := ValidateJoinBlock(block)
 	if err != nil {
 		h.sendResponseJsonError(resp, http.StatusBadRequest, errors.Wrap(err, "invalid join block"))
 		return
 	}
 
 	info, err := h.registrar.JoinChannel(channelID, block, isAppChannel)
-	if err == nil {
-		info.URL = path.Join(URLBaseV1Channels, info.Name)
-		h.logger.Debugf("Successfully joined channel: %s", info)
-		h.sendResponseCreated(resp, info.URL, info)
+	if err != nil {
+		h.sendJoinError(err, resp)
 		return
 	}
+	info.URL = path.Join(URLBaseV1Channels, info.Name)
 
-	h.sendJoinError(err, resp)
+	h.logger.Debugf("Successfully joined channel: %s", info.URL)
+	h.sendResponseCreated(resp, info.URL, info)
 }
 
 // Expect a multipart/form-data with a single part, of type file, with key FormDataConfigBlockKey.
 func (h *HTTPHandler) multipartFormDataBodyToBlock(params map[string]string, req *http.Request, resp http.ResponseWriter) *cb.Block {
 	boundary := params["boundary"]
-	reader := multipart.NewReader(req.Body, boundary)
-	form, err := reader.ReadForm(100 * 1024 * 1024)
+	reader := multipart.NewReader(
+		http.MaxBytesReader(resp, req.Body, int64(h.config.MaxRequestBodySize)),
+		boundary,
+	)
+	form, err := reader.ReadForm(2 * int64(h.config.MaxRequestBodySize))
 	if err != nil {
 		h.sendResponseJsonError(resp, http.StatusBadRequest, errors.Wrap(err, "cannot read form from request body"))
 		return nil
@@ -334,11 +341,11 @@ func (h *HTTPHandler) serveNotAllowed(resp http.ResponseWriter, req *http.Reques
 	err := errors.Errorf("invalid request method: %s", req.Method)
 
 	if _, ok := mux.Vars(req)[channelIDKey]; ok {
-		h.sendResponseNotAllowed(resp, err, http.MethodGet, http.MethodPost, http.MethodDelete)
+		h.sendResponseNotAllowed(resp, err, http.MethodGet, http.MethodDelete)
 		return
 	}
 
-	h.sendResponseNotAllowed(resp, err, http.MethodGet)
+	h.sendResponseNotAllowed(resp, err, http.MethodGet, http.MethodPost)
 }
 
 func negotiateContentType(req *http.Request) (string, error) {

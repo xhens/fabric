@@ -20,7 +20,6 @@ import (
 	"github.com/hyperledger/fabric/common/ledger/testutil"
 	"github.com/hyperledger/fabric/internal/pkg/txflags"
 	"github.com/hyperledger/fabric/protoutil"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,7 +108,9 @@ func TestBootstrapFromSnapshot(t *testing.T) {
 		// bootstrap another blockstore from the snapshot and verify its APIs
 		importTxIDsBatchSize = uint64(2) // smaller batch size for testing
 
-		bootstrappedBlockStore, err = env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
+		err = env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
+		require.NoError(t, err)
+		bootstrappedBlockStore, err = env.provider.Open(bootstrappedLedgerName)
 		require.NoError(t, err)
 	}
 
@@ -261,7 +262,7 @@ func TestBootstrapFromSnapshot(t *testing.T) {
 
 			// before, we test for index sync-up, verify that the last set of blocks not indexed in the original index
 			_, err := blkfileMgr.retrieveBlockByNumber(block.Header.Number)
-			assert.Exactly(t, ErrNotFoundInIndex, err)
+			require.Exactly(t, ErrNotFoundInIndex, err)
 
 			// close and open should be able to sync-up the index
 			closeBlockStore()
@@ -342,14 +343,14 @@ func TestBootstrapFromSnapshotErrorPaths(t *testing.T) {
 
 	t.Run("metadata-file-missing", func(t *testing.T) {
 		cleanupDirs()
-		_, err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
+		err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
 		require.Contains(t, err.Error(), "error while opening the snapshot file: "+metadataFile)
 	})
 
 	t.Run("bootstapping-more-than-once", func(t *testing.T) {
 		cleanupDirs()
 		env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
-		_, err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
+		err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
 		require.EqualError(t, err, "dir "+ledgerDir+" not empty")
 	})
 
@@ -358,14 +359,14 @@ func TestBootstrapFromSnapshotErrorPaths(t *testing.T) {
 		mf, err := snapshot.CreateFile(metadataFile, snapshotFileFormat, testNewHashFunc)
 		require.NoError(t, err)
 		require.NoError(t, mf.Close())
-		_, err = env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
+		err = env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
 		require.Contains(t, err.Error(), "error while reading from the snapshot file: "+metadataFile)
 	})
 
 	t.Run("data-file-missing", func(t *testing.T) {
 		cleanupDirs()
 		createSnapshotMetadataFile(1)
-		_, err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
+		err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
 		require.Contains(t, err.Error(), "error while opening the snapshot file: "+dataFile)
 	})
 
@@ -373,7 +374,7 @@ func TestBootstrapFromSnapshotErrorPaths(t *testing.T) {
 		cleanupDirs()
 		createSnapshotMetadataFile(2)
 		createSnapshotDataFile("single-tx-id")
-		_, err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
+		err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
 		require.Contains(t, err.Error(), "error while reading from snapshot file: "+dataFile)
 	})
 
@@ -385,7 +386,7 @@ func TestBootstrapFromSnapshotErrorPaths(t *testing.T) {
 		defer func() {
 			env = newTestEnv(t, NewConf(testPath, 0))
 		}()
-		_, err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
+		err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
 		require.Contains(t, err.Error(), "error writing batch to leveldb")
 	})
 
@@ -393,7 +394,7 @@ func TestBootstrapFromSnapshotErrorPaths(t *testing.T) {
 		cleanupDirs()
 		createSnapshotMetadataFile(1)
 		createSnapshotDataFile("single-tx-id")
-		_, err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
+		err := env.provider.BootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo)
 		require.NoError(t, err)
 		env.provider.Close()
 		env = newTestEnv(t, NewConf(testPath, 0))
@@ -504,9 +505,11 @@ func verifyQueriesOnBlocksAddedAfterBootstrapping(t *testing.T,
 		block := blocksAfterSnapshot[i]
 		for j, txID := range d.txIDs {
 			retrievedBlock, err := bootstrappedBlockStore.RetrieveBlockByTxID(txID)
+			require.NoError(t, err)
 			require.Equal(t, block, retrievedBlock)
 
 			retrievedTxEnv, err := bootstrappedBlockStore.RetrieveTxByID(txID)
+			require.NoError(t, err)
 			expectedTxEnv, err := protoutil.GetEnvelopeFromBlock(block.Data.Data[j])
 			require.NoError(t, err)
 			require.Equal(t, expectedTxEnv, retrievedTxEnv)

@@ -24,6 +24,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/msgs"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/privacyenabledstate"
 	"github.com/hyperledger/fabric/core/ledger/pvtdatastorage"
+	"github.com/hyperledger/fabric/internal/fileutil"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 	"github.com/syndtr/goleveldb/leveldb"
@@ -69,9 +70,9 @@ type Provider struct {
 	pvtdataStoreProvider *pvtdatastorage.Provider
 	dbProvider           *privacyenabledstate.DBProvider
 	historydbProvider    *history.DBProvider
-	configHistoryMgr     confighistory.Mgr
+	configHistoryMgr     *confighistory.Mgr
 	stateListeners       []ledger.StateListener
-	bookkeepingProvider  bookkeeping.Provider
+	bookkeepingProvider  *bookkeeping.Provider
 	initializer          *ledger.Initializer
 	collElgNotifier      *collElgNotifier
 	stats                *stats
@@ -226,7 +227,7 @@ func (p *Provider) initStateDBProvider() error {
 	if err != nil {
 		return err
 	}
-	stateDB := &privacyenabledstate.StateDBConfig{
+	stateDBConfig := &privacyenabledstate.StateDBConfig{
 		StateDBConfig: p.initializer.Config.StateDBConfig,
 		LevelDBPath:   StateDBPath(p.initializer.Config.RootFSPath),
 	}
@@ -235,7 +236,7 @@ func (p *Provider) initStateDBProvider() error {
 		p.bookkeepingProvider,
 		p.initializer.MetricsProvider,
 		p.initializer.HealthCheckRegistry,
-		stateDB,
+		stateDBConfig,
 		sysNamespaces,
 	)
 	return err
@@ -263,7 +264,7 @@ func (p *Provider) initSnapshotDir() error {
 	if err := os.MkdirAll(completedSnapshotsPath, 0755); err != nil {
 		return errors.Wrapf(err, "error while creating the dir: %s", completedSnapshotsPath)
 	}
-	return syncDir(snapshotsRootDir)
+	return fileutil.SyncDir(snapshotsRootDir)
 }
 
 // Create implements the corresponding method from interface ledger.PeerLedgerProvider
@@ -342,10 +343,7 @@ func (p *Provider) open(ledgerID string) (ledger.PeerLedger, error) {
 	// Get the history database (index for history of values by key) for a chain/ledger
 	var historyDB *history.DB
 	if p.historydbProvider != nil {
-		historyDB, err = p.historydbProvider.GetDBHandle(ledgerID)
-		if err != nil {
-			return nil, err
-		}
+		historyDB = p.historydbProvider.GetDBHandle(ledgerID)
 	}
 
 	initializer := &lgrInitializer{
@@ -362,7 +360,7 @@ func (p *Provider) open(ledgerID string) (ledger.PeerLedger, error) {
 		stats:                    p.stats.ledgerStats(ledgerID),
 		customTxProcessors:       p.initializer.CustomTxProcessors,
 		hashProvider:             p.initializer.HashProvider,
-		snapshotsConfig:          p.initializer.Config.SnapshotsConfig,
+		config:                   p.initializer.Config,
 	}
 
 	l, err := newKVLedger(initializer)

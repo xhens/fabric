@@ -203,7 +203,7 @@ func New(c *Config, rootDir string, client *docker.Client, startPort int, compon
 	network.ExternalBuilders = []fabricconfig.ExternalBuilder{{
 		Path:                 filepath.Join(cwd, "..", "externalbuilders", "binary"),
 		Name:                 "binary",
-		EnvironmentWhitelist: []string{"GOPROXY"},
+		PropagateEnvironment: []string{"GOPROXY"},
 	}}
 
 	if network.Templates == nil {
@@ -413,6 +413,28 @@ func (n *Network) userCryptoDir(org *Organization, nodeOrganizationType, user, c
 	)
 }
 
+// PeerOrgCADir returns the path to the folder containing the CA certificate(s) and/or
+// keys for the specified peer organization.
+func (n *Network) PeerOrgCADir(o *Organization) string {
+	return filepath.Join(
+		n.CryptoPath(),
+		"peerOrganizations",
+		o.Domain,
+		"ca",
+	)
+}
+
+// OrdererOrgCADir returns the path to the folder containing the CA certificate(s) and/or
+// keys for the specified orderer organization.
+func (n *Network) OrdererOrgCADir(o *Organization) string {
+	return filepath.Join(
+		n.CryptoPath(),
+		"ordererOrganizations",
+		o.Domain,
+		"ca",
+	)
+}
+
 // PeerUserMSPDir returns the path to the MSP directory containing the
 // certificates and keys for the specified user of the peer.
 func (n *Network) PeerUserMSPDir(p *Peer, user string) string {
@@ -450,6 +472,19 @@ func (n *Network) PeerUserCert(p *Peer, user string) string {
 	)
 }
 
+// PeerCACert returns the path to the CA certificate for the peer
+// organization.
+func (n *Network) PeerCACert(p *Peer) string {
+	org := n.Organization(p.Organization)
+	Expect(org).NotTo(BeNil())
+
+	return filepath.Join(
+		n.PeerOrgMSPDir(org),
+		"cacerts",
+		fmt.Sprintf("ca.%s-cert.pem", org.Domain),
+	)
+}
+
 // OrdererUserCert returns the path to the certificate for the specified user in
 // the orderer organization.
 func (n *Network) OrdererUserCert(o *Orderer, user string) string {
@@ -460,6 +495,19 @@ func (n *Network) OrdererUserCert(o *Orderer, user string) string {
 		n.OrdererUserMSPDir(o, user),
 		"signcerts",
 		fmt.Sprintf("%s@%s-cert.pem", user, org.Domain),
+	)
+}
+
+// OrdererCACert returns the path to the CA certificate for the orderer
+// organization.
+func (n *Network) OrdererCACert(o *Orderer) string {
+	org := n.Organization(o.Organization)
+	Expect(org).NotTo(BeNil())
+
+	return filepath.Join(
+		n.OrdererOrgMSPDir(org),
+		"cacerts",
+		fmt.Sprintf("ca.%s-cert.pem", org.Domain),
 	)
 }
 
@@ -1212,6 +1260,8 @@ func (n *Network) PeerRunner(p *Peer, env ...string) *ginkgomon.Runner {
 		commands.NodeStart{PeerID: p.ID()},
 		"",
 		fmt.Sprintf("FABRIC_CFG_PATH=%s", n.PeerDir(p)),
+		fmt.Sprintf("CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin"),
+		fmt.Sprintf("CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw"),
 	)
 	cmd.Env = append(cmd.Env, env...)
 
@@ -1248,12 +1298,13 @@ func (n *Network) NetworkGroupRunner() ifrit.Runner {
 func (n *Network) peerCommand(command Command, tlsDir string, env ...string) *exec.Cmd {
 	cmd := NewCommand(n.Components.Peer(), command)
 	cmd.Env = append(cmd.Env, env...)
-	if ConnectsToOrderer(command) {
+
+	if connectsToOrderer(command) {
 		cmd.Args = append(cmd.Args, "--tls")
 		cmd.Args = append(cmd.Args, "--cafile", n.CACertsBundlePath())
 	}
 
-	if ClientAuthEnabled(command) {
+	if clientAuthEnabled(command) {
 		certfilePath := filepath.Join(tlsDir, "client.crt")
 		keyfilePath := filepath.Join(tlsDir, "client.key")
 
@@ -1271,6 +1322,24 @@ func (n *Network) peerCommand(command Command, tlsDir string, env ...string) *ex
 		cmd.Args = append(cmd.Args, n.CACertsBundlePath())
 	}
 	return cmd
+}
+
+func connectsToOrderer(c Command) bool {
+	for _, arg := range c.Args() {
+		if arg == "--orderer" {
+			return true
+		}
+	}
+	return false
+}
+
+func clientAuthEnabled(c Command) bool {
+	for _, arg := range c.Args() {
+		if arg == "--clientauth" {
+			return true
+		}
+	}
+	return false
 }
 
 func flagCount(flag string, args []string) int {

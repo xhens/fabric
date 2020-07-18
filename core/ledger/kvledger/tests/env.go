@@ -17,7 +17,6 @@ import (
 	"github.com/hyperledger/fabric/bccsp"
 	"github.com/hyperledger/fabric/bccsp/sw"
 	"github.com/hyperledger/fabric/common/ledger/blkstorage"
-	"github.com/hyperledger/fabric/common/ledger/util"
 	"github.com/hyperledger/fabric/common/metrics/disabled"
 	"github.com/hyperledger/fabric/core/chaincode/lifecycle"
 	"github.com/hyperledger/fabric/core/common/privdata"
@@ -27,10 +26,11 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/ledgermgmt"
 	corepeer "github.com/hyperledger/fabric/core/peer"
 	"github.com/hyperledger/fabric/core/scc/lscc"
+	"github.com/hyperledger/fabric/internal/fileutil"
 	"github.com/hyperledger/fabric/msp"
 	"github.com/hyperledger/fabric/msp/mgmt"
 	"github.com/hyperledger/fabric/protoutil"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type rebuildable uint8
@@ -44,14 +44,14 @@ const (
 )
 
 type env struct {
-	assert      *assert.Assertions
+	assert      *require.Assertions
 	initializer *ledgermgmt.Initializer
 	ledgerMgr   *ledgermgmt.LedgerMgr
 }
 
 func newEnv(t *testing.T) *env {
 	cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	return newEnvWithInitializer(t, &ledgermgmt.Initializer{
 		HashProvider: cryptoProvider,
 		EbMetadataProvider: &externalbuilder.MetadataProvider{
@@ -64,7 +64,7 @@ func newEnvWithInitializer(t *testing.T, initializer *ledgermgmt.Initializer) *e
 	populateMissingsWithTestDefaults(t, initializer)
 
 	return &env{
-		assert:      assert.New(t),
+		assert:      require.New(t),
 		initializer: initializer,
 	}
 }
@@ -160,13 +160,13 @@ func (e *env) verifyRebuilableDoesNotExist(flags rebuildable) {
 }
 
 func (e *env) verifyNonEmptyDirExists(path string) {
-	empty, err := util.DirEmpty(path)
+	empty, err := fileutil.DirEmpty(path)
 	e.assert.NoError(err)
 	e.assert.False(empty)
 }
 
 func (e *env) verifyDirDoesNotExist(path string) {
-	exists, _, err := util.FileExists(path)
+	exists, _, err := fileutil.FileExists(path)
 	e.assert.NoError(err)
 	e.assert.False(exists)
 }
@@ -213,7 +213,7 @@ func populateMissingsWithTestDefaults(t *testing.T, initializer *ledgermgmt.Init
 			return mgmt.GetManagerForChain(chainID)
 		}
 		cryptoProvider, err := sw.NewDefaultSecurityLevelWithKeystore(sw.NewDummyKeyStore())
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		mspID := "test-mspid"
 		membershipInfoProvider := privdata.NewMembershipInfoProvider(mspID, createSelfSignedData(cryptoProvider), identityDeserializerFactory)
 		initializer.MembershipInfoProvider = membershipInfoProvider
@@ -236,7 +236,7 @@ func populateMissingsWithTestDefaults(t *testing.T, initializer *ledgermgmt.Init
 
 	if initializer.Config.StateDBConfig == nil {
 		initializer.Config.StateDBConfig = &ledger.StateDBConfig{
-			StateDatabase: "goleveldb",
+			StateDatabase: ledger.GoLevelDB,
 		}
 	}
 

@@ -107,7 +107,7 @@ func Main() {
 		clientRootCAs:         serverConfig.SecOpts.ClientRootCAs,
 	}
 
-	lf, _, err := createLedgerFactory(conf, metricsProvider)
+	lf, err := createLedgerFactory(conf, metricsProvider)
 	if err != nil {
 		logger.Panicf("Failed to create ledger factory: %v", err)
 	}
@@ -712,7 +712,7 @@ func initializeMultichannelRegistrar(
 	bccsp bccsp.BCCSP,
 	callbacks ...channelconfig.BundleActor,
 ) *multichannel.Registrar {
-	registrar := multichannel.NewRegistrar(*conf, lf, signer, metricsProvider, bccsp, callbacks...)
+	registrar := multichannel.NewRegistrar(*conf, lf, signer, metricsProvider, bccsp, clusterDialer, callbacks...)
 
 	consenters := map[string]consensus.Consenter{}
 

@@ -27,6 +27,7 @@ var (
 	lastKeyIndicator            = byte(0x01)
 	savePointKey                = []byte{'s'}
 	fullScanIteratorValueFormat = byte(1)
+	maxDataImportBatchSize      = 4 * 1024 * 1024
 )
 
 // VersionedDBProvider implements interface VersionedDBProvider
@@ -53,9 +54,24 @@ func (provider *VersionedDBProvider) GetDBHandle(dbName string, namespaceProvide
 	return newVersionedDB(provider.dbProvider.GetDBHandle(dbName), dbName), nil
 }
 
+func (provider *VersionedDBProvider) BootstrapDBFromState(
+	dbName string, savepoint *version.Height, itr statedb.FullScanIterator, dbValueFormat byte) error {
+	vdb := newVersionedDB(provider.dbProvider.GetDBHandle(dbName), dbName)
+	if err := vdb.importState(itr, savepoint, dbValueFormat); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Close closes the underlying db
 func (provider *VersionedDBProvider) Close() {
 	provider.dbProvider.Close()
+}
+
+// Drop drops channel-specific data from the state leveldb.
+// It is not an error if a database does not exist.
+func (provider *VersionedDBProvider) Drop(dbName string) error {
+	return provider.dbProvider.Drop(dbName)
 }
 
 // VersionedDB implements VersionedDB interface
@@ -143,7 +159,10 @@ func (vdb *versionedDB) GetStateRangeScanIteratorWithPagination(namespace string
 	if endKey == "" {
 		dataEndKey[len(dataEndKey)-1] = lastKeyIndicator
 	}
-	dbItr := vdb.db.GetIterator(dataStartKey, dataEndKey)
+	dbItr, err := vdb.db.GetIterator(dataStartKey, dataEndKey)
+	if err != nil {
+		return nil, err
+	}
 	return newKVScanner(namespace, dbItr, pageSize), nil
 }
 
@@ -159,7 +178,7 @@ func (vdb *versionedDB) ExecuteQueryWithPagination(namespace, query, bookmark st
 
 // ApplyUpdates implements method in VersionedDB interface
 func (vdb *versionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version.Height) error {
-	dbBatch := leveldbhelper.NewUpdateBatch()
+	dbBatch := vdb.db.NewUpdateBatch()
 	namespaces := batch.GetUpdatedNamespaces()
 	for _, ns := range namespaces {
 		updates := batch.GetUpdates(ns)
@@ -215,6 +234,47 @@ func (vdb *versionedDB) GetLatestSavePoint() (*version.Height, error) {
 // is to generate the snapshot files for the stateleveldb
 func (vdb *versionedDB) GetFullScanIterator(skipNamespace func(string) bool) (statedb.FullScanIterator, byte, error) {
 	return newFullDBScanner(vdb.db, skipNamespace)
+}
+
+// importState implements method in VersionedDB interface. The function is expected to be used
+// for importing the state from a previously snapshotted state. The parameter itr provides access to
+// the snapshotted state.
+func (vdb *versionedDB) importState(itr statedb.FullScanIterator, savepoint *version.Height, dbValueFormat byte) error {
+	if itr == nil {
+		return vdb.db.Put(savePointKey, savepoint.ToBytes(), true)
+	}
+	if dbValueFormat != fullScanIteratorValueFormat {
+		return errors.Errorf("value format [%x] not supported. Expected value format [%x]",
+			dbValueFormat, fullScanIteratorValueFormat)
+	}
+	dbBatch := vdb.db.NewUpdateBatch()
+	batchSize := 0
+	for {
+		compositeKey, dbValue, err := itr.Next()
+		if err != nil {
+			return err
+		}
+		if compositeKey == nil {
+			break
+		}
+		dataKey := encodeDataKey(compositeKey.Namespace, compositeKey.Key)
+		batchSize += len(dataKey) + len(dbValue)
+		dbBatch.Put(dataKey, dbValue)
+		if batchSize >= maxDataImportBatchSize {
+			if err := vdb.db.WriteBatch(dbBatch, true); err != nil {
+				return err
+			}
+			batchSize = 0
+			dbBatch.Reset()
+		}
+	}
+	dbBatch.Put(savePointKey, savepoint.ToBytes())
+	return vdb.db.WriteBatch(dbBatch, true)
+}
+
+// IsEmpty return true if the statedb does not have any content
+func (vdb *versionedDB) IsEmpty() (bool, error) {
+	return vdb.db.IsEmpty()
 }
 
 func encodeDataKey(ns, key string) []byte {
@@ -292,9 +352,9 @@ type fullDBScanner struct {
 }
 
 func newFullDBScanner(db *leveldbhelper.DBHandle, skipNamespace func(namespace string) bool) (*fullDBScanner, byte, error) {
-	dbItr := db.GetIterator(dataKeyPrefix, dataKeyStopper)
-	if err := dbItr.Error(); err != nil {
-		return nil, byte(0), errors.Wrap(err, "internal leveldb error while obtaining db iterator")
+	dbItr, err := db.GetIterator(dataKeyPrefix, dataKeyStopper)
+	if err != nil {
+		return nil, byte(0), err
 	}
 	return &fullDBScanner{
 			db:     db,

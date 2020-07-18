@@ -8,7 +8,6 @@ package multichannel
 
 import (
 	"fmt"
-	"github.com/hyperledger/fabric/orderer/common/types"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/capabilities"
@@ -19,31 +18,10 @@ import (
 	"github.com/hyperledger/fabric/internal/configtxgen/genesisconfig"
 	"github.com/hyperledger/fabric/orderer/common/blockcutter"
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
+	"github.com/hyperledger/fabric/orderer/common/types"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/protoutil"
 )
-
-type mockConsenter struct {
-	cluster bool
-}
-
-func (mc *mockConsenter) HandleChain(support consensus.ConsenterSupport, metadata *cb.Metadata) (consensus.Chain, error) {
-	chain := &mockChain{
-		queue:    make(chan *cb.Envelope),
-		cutter:   support.BlockCutter(),
-		support:  support,
-		metadata: metadata,
-		done:     make(chan struct{}),
-	}
-
-	if mc.cluster {
-		clusterChain := &mockChainCluster{}
-		clusterChain.mockChain = chain
-		return clusterChain, nil
-	}
-
-	return chain, nil
-}
 
 type mockChainCluster struct {
 	*mockChain
@@ -214,4 +192,28 @@ func makeNormalTx(chainID string, i int) *cb.Envelope {
 	return &cb.Envelope{
 		Payload: protoutil.MarshalOrPanic(payload),
 	}
+}
+
+func handleChain(support consensus.ConsenterSupport, metadata *cb.Metadata) (consensus.Chain, error) {
+	chain := &mockChain{
+		queue:    make(chan *cb.Envelope),
+		cutter:   support.BlockCutter(),
+		support:  support,
+		metadata: metadata,
+		done:     make(chan struct{}),
+	}
+
+	return chain, nil
+}
+
+func handleChainCluster(support consensus.ConsenterSupport, metadata *cb.Metadata) (consensus.Chain, error) {
+	chain := &mockChain{
+		queue:    make(chan *cb.Envelope),
+		cutter:   support.BlockCutter(),
+		support:  support,
+		metadata: metadata,
+		done:     make(chan struct{}),
+	}
+
+	return &mockChainCluster{mockChain: chain}, nil
 }

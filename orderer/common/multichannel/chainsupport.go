@@ -49,14 +49,14 @@ func newChainSupport(
 	signer identity.SignerSerializer,
 	blockcutterMetrics *blockcutter.Metrics,
 	bccsp bccsp.BCCSP,
-) *ChainSupport {
+) (*ChainSupport, error) {
 	// Read in the last block and metadata for the channel
 	lastBlock := blockledger.GetBlock(ledgerResources, ledgerResources.Height()-1)
 	metadata, err := protoutil.GetConsenterMetadataFromBlock(lastBlock)
 	// Assuming a block created with cb.NewBlock(), this should not
 	// error even if the orderer metadata is an empty byte slice
 	if err != nil {
-		logger.Fatalf("[channel: %s] Error extracting orderer metadata: %s", ledgerResources.ConfigtxValidator().ChannelID(), err)
+		return nil, errors.Wrapf(err, "error extracting orderer metadata for channel: %s", ledgerResources.ConfigtxValidator().ChannelID())
 	}
 
 	// Construct limited support needed as a parameter for additional support
@@ -77,16 +77,16 @@ func newChainSupport(
 	// Set up the block writer
 	cs.BlockWriter = newBlockWriter(lastBlock, registrar, cs)
 
-	// Set up the consenter
+	// Set up the clusterConsenter
 	consenterType := ledgerResources.SharedConfig().ConsensusType()
 	consenter, ok := consenters[consenterType]
 	if !ok {
-		logger.Panicf("Error retrieving consenter of type: %s", consenterType)
+		return nil, errors.Errorf("error retrieving clusterConsenter of type: %s", consenterType)
 	}
 
 	cs.Chain, err = consenter.HandleChain(cs, metadata)
 	if err != nil {
-		logger.Panicf("[channel: %s] Error creating consenter: %s", cs.ChannelID(), err)
+		return nil, errors.Wrapf(err, "error creating clusterConsenter for channel: %s", cs.ChannelID())
 	}
 
 	cs.MetadataValidator, ok = cs.Chain.(consensus.MetadataValidator)
@@ -101,9 +101,10 @@ func newChainSupport(
 
 	logger.Debugf("[channel: %s] Done creating channel support resources", cs.ChannelID())
 
-	return cs
+	return cs, nil
 }
 
+// TODO Move this method and associated test to ledgerResources struct, to it can be shared with the FollowerResources struct.
 // Block returns a block with the following number,
 // or nil if such a block doesn't exist.
 func (cs *ChainSupport) Block(number uint64) *cb.Block {
@@ -176,6 +177,7 @@ func (cs *ChainSupport) ProposeConfigUpdate(configtx *cb.Envelope) (*cb.ConfigEn
 	return env, nil
 }
 
+// TODO Move this method and associated test to ledgerResources struct, to it can be shared with the FollowerResources struct.
 // ChannelID passes through to the underlying configtx.Validator
 func (cs *ChainSupport) ChannelID() string {
 	return cs.ConfigtxValidator().ChannelID()
@@ -197,6 +199,7 @@ func (cs *ChainSupport) Append(block *cb.Block) error {
 	return cs.ledgerResources.ReadWriter.Append(block)
 }
 
+// TODO Move this method and associated test to ledgerResources struct, to it can be shared with the FollowerResources struct.
 // VerifyBlockSignature verifies a signature of a block.
 // It has an optional argument of a configuration envelope
 // which would make the block verification to use validation rules
