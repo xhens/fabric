@@ -56,7 +56,7 @@ As a developer:
   bring a team to implement it, or join one of the teams working on an existing Epic.
   If you see an Epic that interests you on the
   `release roadmap <https://jira.hyperledger.org/secure/Dashboard.jspa?selectPageId=10104>`_,
-  contact the Epic assignee via the Jira work item or on `RocketChat <https://chat.hyperledger.org/>`_.
+  contact the Epic assignee via the Jira work item or on `RocketChat <https://chat.hyperledger.org/>`__.
 
 Getting a Linux Foundation account
 ----------------------------------
@@ -93,17 +93,17 @@ Contributing documentation
 --------------------------
 
 It's a good idea to make your first change a documentation change. It's quick
-and easy to do, checks that you have a correctly configured machine, (including
-the required pre-requisite software), and gets you familiar with the whole
-process.  Use the following sections to help you get started:
+and easy to do, ensures that you have a correctly configured machine, (including
+the required pre-requisite software), and gets you familiar with the
+contribution process.  Use the following topics to help you get started:
 
 .. toctree::
    :maxdepth: 1
 
+   advice_for_writers
    docs_guide
-   style_guide
    international_languages
-
+   style_guide
 
 Project Governance
 ------------------
@@ -446,11 +446,9 @@ Related Topics
 .. toctree::
    :maxdepth: 1
 
-   MAINTAINERS
    jira_navigation
    dev-setup/devenv
    dev-setup/build
-   testing
    style-guides/go-style
 
 .. Licensed under Creative Commons Attribution 4.0 International License

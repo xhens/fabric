@@ -11,10 +11,10 @@ import (
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/dataformat"
-	"github.com/hyperledger/fabric/common/ledger/util"
 	"github.com/hyperledger/fabric/common/ledger/util/leveldbhelper"
 	"github.com/hyperledger/fabric/common/metrics"
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/internal/fileutil"
 	"github.com/pkg/errors"
 )
 
@@ -111,23 +111,45 @@ func (p *BlockStoreProvider) Open(ledgerid string) (*BlockStore, error) {
 // on disk. The consumer, such as peer is expected to keep track of failures and cleanup the
 // data explicitly.
 func (p *BlockStoreProvider) BootstrapFromSnapshottedTxIDs(
-	snapshotDir string, snapshotInfo *SnapshotInfo) (*BlockStore, error) {
+	snapshotDir string, snapshotInfo *SnapshotInfo) error {
 	indexStoreHandle := p.leveldbProvider.GetDBHandle(snapshotInfo.LedgerID)
 	if err := bootstrapFromSnapshottedTxIDs(snapshotDir, snapshotInfo, p.conf, indexStoreHandle); err != nil {
-		return nil, err
+		return err
 	}
-	return newBlockStore(snapshotInfo.LedgerID, p.conf, p.indexConfig, indexStoreHandle, p.stats)
+	return nil
 }
 
 // Exists tells whether the BlockStore with given id exists
 func (p *BlockStoreProvider) Exists(ledgerid string) (bool, error) {
-	exists, _, err := util.FileExists(p.conf.getLedgerBlockDir(ledgerid))
+	exists, err := fileutil.DirExists(p.conf.getLedgerBlockDir(ledgerid))
 	return exists, err
+}
+
+// Drop drops blockstore data (block index and blocks directory) for the given ledgerid (channelID).
+// It is not an error if the channel does not exist.
+// This function is not error safe. If this function returns an error or a crash takes place, it is highly likely
+// that the data for this ledger is left in an inconsistent state. Opening the ledger again or reusing the previously
+// opened ledger can show unknown behavior.
+func (p *BlockStoreProvider) Drop(ledgerid string) error {
+	exists, err := p.Exists(ledgerid)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	if err := p.leveldbProvider.Drop(ledgerid); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(p.conf.getLedgerBlockDir(ledgerid)); err != nil {
+		return err
+	}
+	return fileutil.SyncDir(p.conf.getChainsDir())
 }
 
 // List lists the ids of the existing ledgers
 func (p *BlockStoreProvider) List() ([]string, error) {
-	return util.ListSubdirs(p.conf.getChainsDir())
+	return fileutil.ListSubdirs(p.conf.getChainsDir())
 }
 
 // Close closes the BlockStoreProvider

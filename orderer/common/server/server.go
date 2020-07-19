@@ -208,4 +208,3 @@ func (s *server) Deliver(srv ab.AtomicBroadcast_DeliverServer) error {
 	}
 	return s.dh.Handle(srv.Context(), deliverServer)
 }
-

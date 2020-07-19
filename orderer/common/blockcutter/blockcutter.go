@@ -8,12 +8,12 @@ package blockcutter
 
 import (
 	"fmt"
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
 	"time"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/orderer/common/prometheus"
 )
 
 var logger = flogging.MustGetLogger("orderer.common.blockcutter")

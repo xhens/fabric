@@ -10,8 +10,6 @@ import (
 	"context"
 	"encoding/pem"
 	"fmt"
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
-	"github.com/hyperledger/fabric/orderer/common/types"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +22,8 @@ import (
 	"github.com/hyperledger/fabric/bccsp"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/orderer/common/cluster"
+	"github.com/hyperledger/fabric/orderer/common/prometheus"
+	"github.com/hyperledger/fabric/orderer/common/types"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
@@ -370,6 +370,7 @@ func (c *Chain) Start() {
 	c.periodicChecker = &PeriodicCheck{
 		Logger:        c.logger,
 		Report:        es.confirmSuspicion,
+		ReportCleared: es.clearSuspicion,
 		CheckInterval: interval,
 		Condition:     c.suspectEviction,
 	}
@@ -625,7 +626,7 @@ func (c *Chain) run() {
 		Label:      prometheus.Chaincode,
 		StatType:   prometheus.Max,
 	}
-	// go ledgerTransactionCount.Run()
+	go ledgerTransactionCount.Run()
 	controller := prometheus.NewController(&ledgerTransactionCount, 5, 13)
 	if controller.FirstMetric != nil {
 		if controller.FirstMetric.Value > float64(controller.SaturationPoint) {
