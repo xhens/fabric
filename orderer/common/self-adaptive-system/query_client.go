@@ -1,9 +1,8 @@
-package prometheus
+package self_adaptive_system
 
 import (
 	"encoding/json"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -69,7 +68,6 @@ type MetricError struct {
 	error     string
 }
 
-// TODO: testing locally can be localhost. testing on fabric should be prometheus.
 var baseUrl = ContainerHost
 var SINGLE = "/api/v1/query"
 var RANGE = "/api/v1/query_range"
@@ -99,10 +97,10 @@ func retrieveInstantQueryResponse(url *url.URL) (InstantVectorObject, error) {
 			return InstantVectorObject{}, err
 		}
 	} else if data.Status == Fail {
-		log.Fatalf("Prometheus query to %s with %s failed with %s", url.Path, url.RawQuery, data.Status)
+		logger.Debugf("Prometheus query to %s with %s failed with %s", url.Path, url.RawQuery, data.Status)
 		return InstantVectorObject{}, err
 	} else if err != nil {
-		log.Fatalf("Query error %v", err)
+		logger.Debugf("Query error %v", err)
 		return InstantVectorObject{}, err
 	}
 	return InstantVectorObject{}, err
@@ -129,10 +127,10 @@ func retrieveGenericRangeQueryResponse(url *url.URL) (GenericRangeVector, error)
 			return GenericRangeVector{}, err
 		}
 	} else if data.Status == Fail {
-		log.Fatalf("Prometheus query to %s with %s failed with %s", url.Path, url.RawQuery, data.Status)
+		logger.Debugf("Prometheus query to %s with %s failed with %s", url.Path, url.RawQuery, data.Status)
 		return GenericRangeVector{}, err
 	} else if err != nil {
-		log.Fatalf("Query error %v", err)
+		logger.Debugf("Query error %v", err)
 		return GenericRangeVector{}, err
 	}
 	return GenericRangeVector{}, err
@@ -146,17 +144,15 @@ func rangeGenericQuery(queryString string, startTime int64, endTime int64, step 
 	qsParams.Set("step", strconv.Itoa(step))
 	query := qsParams.Encode()
 	targetParams := retrieveTargetParameters(RANGE, query)
-	// TODO: Be careful of error handling here. it returned empty response.
 	res, _ := retrieveGenericRangeQueryResponse(targetParams)
 	return res
 }
 
-// TODO: Improve error handling
 func doRequest(url string) ([]byte, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		// set logger to Printf because using Panic or Fatal will cause the Docker Container to stop
-		log.Printf("Req Error %v", err)
+		logger.Debugf("Req Error %v", err)
 		return nil, err
 	} else if resp.StatusCode != http.StatusOK {
 		logger.Debug("Bad request. Status code ", resp.StatusCode)
@@ -165,8 +161,8 @@ func doRequest(url string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	body, readErr := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("ioutil read error %v", readErr)
+	if readErr != nil {
+		logger.Debugf("ioutil read error %v", readErr)
 		return nil, err
 	}
 	return body, nil
@@ -190,7 +186,7 @@ func callGenericRangeQuery(rangeQueryOp chan KvMap, metric string, timeRange tim
 	matrixQuery := rangeGenericQuery(metric, startTimeUnix, endTimeUnix, 7)
 	if firstValue == true {
 		firstValQueryRange, _ := extractFirstValueFromGenericQueryRange(matrixQuery)
-		log.Print("First value of query range: ", firstValQueryRange)
+		logger.Debug("First value of query range: ", firstValQueryRange)
 	}
 	stats, _ := extractStatisticFromGenericQueryRange(matrixQuery, statType, label)
 	rangeQueryOp <- stats

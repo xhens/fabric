@@ -1,19 +1,15 @@
-package prometheus
+package self_adaptive_system
 
 import (
-	"fmt"
 	"github.com/hyperledger/fabric/common/flogging"
-	"log"
 	"net/http"
 	"time"
 )
+var logger = flogging.MustGetLogger("orderer.common.self_adaptive_system")
 
-// Used only in Fabric (not in this repo)
-var logger = flogging.MustGetLogger("orderer.common.prometheus")
 
 const (
-	numPollers     = 2                // number of Poller goroutines to launch
-	pollInterval   = 4 * time.Second  // how often to poll each URL
+	pollInterval   = 1 * time.Second  // how often to poll each URL
 	statusInterval = 2 * time.Second  // how often to log status to stdout
 	errTimeout     = 10 * time.Second // back-off timeout on error
 	successTimeout = 600
@@ -48,7 +44,7 @@ func (metricMonitor *MetricMonitor) stateMonitor(updateInterval time.Duration, s
 				metricMonitor.Healthy = monitoringState.Healthy
 				// metricMonitor.HealthEndpoint = monitoringState.HealthEndpoint
 				metricMonitor.Status = monitoringState.Status
-			case <-succTimeout: // TODO: should return only if successful
+			case <-succTimeout:
 				elapsedTime := time.Since(start)
 				logger.Debug("Elapsed time: ", elapsedTime)
 				return
@@ -61,7 +57,7 @@ func (metricMonitor *MetricMonitor) stateMonitor(updateInterval time.Duration, s
 // logState prints a state map
 func (metricMonitor *MetricMonitor) logState(s map[string]bool) {
 	for k, v := range s {
-		log.Printf("Current state: %v %v", k, v)
+		logger.Debugf("Current state: %v %v", k, v)
 	}
 }
 
@@ -77,12 +73,12 @@ func (r *Resource) poll() (string, int) {
 	if err != nil {
 		logger.Debug("Error", r.url, err)
 		r.errCount++
-		fmt.Println(r.errCount)
+		logger.Debug(r.errCount)
 		return err.Error(), 0
 	}
 	r.errCount = 0
 	r.successCount++
-	log.Print("Fetch nr: ", r.successCount)
+	logger.Debug("Fetch nr: ", r.successCount)
 	return resp.Status, resp.StatusCode
 }
 
@@ -120,22 +116,22 @@ func (metricMonitor *MetricMonitor) executeQuery() {
 		vector := make(chan float64)
 		go callSingleQuery(vector, metricMonitor.Metric)
 		queryValue := <-vector
-		log.Println("Metric: ", metricMonitor.Metric, "| Metric Type: ", metricMonitor.MetricType, "| Query Values: ", queryValue)
+		logger.Debug("Metric: ", metricMonitor.Metric, "| Metric Type: ", metricMonitor.MetricType, "| Query Values: ", queryValue)
 		// return queryValue
 	} else if metricMonitor.MetricType == Matrix {
 		matrix := make(chan KvMap)
 		go callGenericRangeQuery(matrix, metricMonitor.Metric, 10, metricMonitor.StatType, metricMonitor.Label, false)
 		queryValue := <-matrix
 		metricMonitor.updateMetricValue(queryValue)
-		log.Println("Metric: ", metricMonitor.Metric, "| Metric Type: ", metricMonitor.MetricType, "| Query Values: ", queryValue)
+		logger.Debug("Metric: ", metricMonitor.Metric, "| Metric Type: ", metricMonitor.MetricType, "| Query Values: ", queryValue)
 	} else if metricMonitor.MetricType != Vector && metricMonitor.MetricType != Matrix {
-		log.Println("Unknown structure type")
+		logger.Debug("Unknown structure type")
 	}
 	// return 0
 }
 
 func (metricMonitor *MetricMonitor) Run() float64{
-	// Create our input and output channels
+	// Create input and output channels
 	pending, complete := make(chan *Resource), make(chan *Resource)
 	var metricVal float64
 
@@ -151,10 +147,10 @@ func (metricMonitor *MetricMonitor) Run() float64{
 					metricVal = metricMonitor.Value
 
 				} else {
-					log.Println("Waiting to recover...")
+					logger.Debug("Waiting to recover...")
 				}
 			case <-pending:
-				log.Println("pending", pending)
+				logger.Debug("pending", pending)
 				return
 			}
 		}

@@ -13,7 +13,7 @@ import (
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
+	"github.com/hyperledger/fabric/orderer/common/self-adaptive-system"
 )
 
 var logger = flogging.MustGetLogger("orderer.common.blockcutter")
@@ -27,7 +27,7 @@ type Receiver interface {
 	// Ordered should be invoked sequentially as messages are ordered
 	// Each batch in `messageBatches` will be wrapped into a block.
 	// `pending` indicates if there are still messages pending in the receiver.
-	Ordered(msg *cb.Envelope, controller *prometheus.ControllerStruct) (messageBatches [][]*cb.Envelope, pending bool)
+	Ordered(msg *cb.Envelope, controller *self_adaptive_system.ControllerStruct) (messageBatches [][]*cb.Envelope, pending bool)
 
 	// Cut returns the current batch and starts a new one
 	Cut() []*cb.Envelope
@@ -69,7 +69,7 @@ func NewReceiverImpl(channelID string, sharedConfigFetcher OrdererConfigFetcher,
 //   - impossible
 //
 // Note that messageBatches can not be greater than 2.
-func (r *receiver) Ordered(msg *cb.Envelope, controller *prometheus.ControllerStruct) (messageBatches [][]*cb.Envelope, pending bool) {
+func (r *receiver) Ordered(msg *cb.Envelope, controller *self_adaptive_system.ControllerStruct) (messageBatches [][]*cb.Envelope, pending bool) {
 	if len(r.pendingBatch) == 0 {
 		// We are beginning a new batch, mark the time
 		r.PendingBatchStartTime = time.Now()
@@ -87,7 +87,7 @@ func (r *receiver) Ordered(msg *cb.Envelope, controller *prometheus.ControllerSt
 	// TODO: First Condition
 	// TODO: replace prints with logs.
 	if bytes > batchSize.PreferredMaxBytes {
-		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), prometheus.PreferredMaxBytes, bytes)
+		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), controller.PreferredMaxBytes, bytes)
 		if ok == true {
 			ordererConfig.BatchSize().PreferredMaxBytes = newBatchSize.PreferredMaxBytes
 			fmt.Println("Updated attribute: ", ordererConfig.BatchSize().PreferredMaxBytes)
@@ -130,7 +130,7 @@ func (r *receiver) Ordered(msg *cb.Envelope, controller *prometheus.ControllerSt
 
 	// TODO: Third condition
 	if uint32(len(r.pendingBatch)) >= batchSize.MaxMessageCount {
-		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), prometheus.MaxMessageCount, bytes)
+		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), controller.MaxMessageCount, bytes)
 		if ok == true {
 			ordererConfig.BatchSize().MaxMessageCount = newBatchSize.MaxMessageCount
 			fmt.Println("Updated attribute: ", ordererConfig.BatchSize().MaxMessageCount)

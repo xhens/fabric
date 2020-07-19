@@ -1,4 +1,4 @@
-package prometheus
+package self_adaptive_system
 
 import (
 	"math"

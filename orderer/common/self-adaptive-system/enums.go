@@ -1,4 +1,4 @@
-package prometheus
+package self_adaptive_system
 
 // Response from Prometheus for a GET or POST request
 const (

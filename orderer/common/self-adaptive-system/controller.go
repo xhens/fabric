@@ -1,23 +1,20 @@
-package prometheus
+package self_adaptive_system
 
 import (
-	"fmt"
 	"github.com/hyperledger/fabric-protos-go/orderer"
 )
 
-// create the Controller interface. Use methods to get the values from the struct, etc,.
 type Controller interface {
 	Run(batchSize *orderer.BatchSize, changingAttribute string, size uint32) (*ControllerBlock, bool)
 }
 
-// Rename to ControllerStruct and export it because it is being used in Blockcutter and other components
 type ControllerStruct struct {
-	FirstMetric         *MetricMonitor
-	SaturationPoint     uint32
-	MaxSaturationPoint  uint32
-	CurrentValue        float64
-	LastValue           float64
-	SuggestedBlockValue *ControllerBlock
+	Metric             *MetricMonitor
+	MinSaturationPoint uint32
+	MaxSaturationPoint uint32
+	CurrentMetricValue float64
+	LastMetricValue    float64
+	SuggestedBlockSize *ControllerBlock
 }
 
 type ControllerBlock struct {
@@ -28,37 +25,38 @@ type ControllerBlock struct {
 
 func NewController(metric *MetricMonitor, SaturationPoint uint32, MaxSaturationPoint uint32) *ControllerStruct {
 	return &ControllerStruct{
-		FirstMetric:         metric,
-		SaturationPoint:     SaturationPoint,
-		MaxSaturationPoint:  MaxSaturationPoint,
-		CurrentValue:        0,
-		LastValue:           0,
-		SuggestedBlockValue: nil,
+		Metric:             metric,
+		MinSaturationPoint: SaturationPoint,
+		MaxSaturationPoint: MaxSaturationPoint,
+		CurrentMetricValue: 0,
+		LastMetricValue:    0,
+		SuggestedBlockSize: nil,
 	}
 }
 
 func (c *ControllerStruct) Run(batchSize *orderer.BatchSize, changingAttribute string, size uint32) (*ControllerBlock, bool) {
-	fmt.Println("ControllerStruct running")
-	if c.FirstMetric != nil {
-		fmt.Println(float64(c.SaturationPoint))
-		fmt.Println("First metric: ", c.FirstMetric.Value, " Saturation point: ", c.SaturationPoint)
+	if c.Metric != nil {
 		if changingAttribute == PreferredMaxBytes {
-			if c.FirstMetric.Value < float64(c.SaturationPoint) {
+			if c.Metric.Value < float64(c.MinSaturationPoint) {
 				newSize := batchSize.PreferredMaxBytes + (batchSize.PreferredMaxBytes * 20 / 100)
+				logger.Debug("PreferredMaxBytes: ", newSize)
 				return &ControllerBlock{PreferredMaxBytes: newSize}, true
-			} else if c.FirstMetric.Value > float64(c.SaturationPoint) && c.FirstMetric.Value < float64(c.MaxSaturationPoint) {
+			} else if c.Metric.Value > float64(c.MinSaturationPoint) && c.Metric.Value < float64(c.MaxSaturationPoint) {
 				newSize := size
+				logger.Debug("PreferredMaxBytes: ", newSize)
 				return &ControllerBlock{PreferredMaxBytes: newSize}, true
-			} else if c.FirstMetric.Value > float64(c.MaxSaturationPoint) {
+			} else if c.Metric.Value > float64(c.MaxSaturationPoint) {
 				newSize := batchSize.PreferredMaxBytes - (batchSize.PreferredMaxBytes * 10 / 100)
+				logger.Debug("PreferredMaxBytes: ", newSize)
 				return &ControllerBlock{PreferredMaxBytes: newSize}, true
 			}
 		} else if changingAttribute == AbsoluteMaxBytes {
-			fmt.Println("second condition")
 			newSize := batchSize.AbsoluteMaxBytes + (batchSize.AbsoluteMaxBytes * 5 / 100)
+			logger.Debug("AbsoluteMaxBytes: ", newSize)
 			return &ControllerBlock{AbsoluteMaxBytes: newSize}, true
 		} else if changingAttribute == MaxMessageCount {
 			newSize := batchSize.MaxMessageCount + 1
+			logger.Debug("MaxMessageCount: ", newSize)
 			return &ControllerBlock{MaxMessageCount: newSize}, true
 		}
 	}

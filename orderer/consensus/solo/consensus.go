@@ -8,7 +8,7 @@ package solo
 
 import (
 	"fmt"
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
+	"github.com/hyperledger/fabric/orderer/common/self-adaptive-system"
 	"time"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -124,7 +124,7 @@ func (ch *chain) main() {
 						continue
 					}
 				}
-				batches, pending := ch.support.BlockCutter().Ordered(msg.normalMsg, &prometheus.ControllerStruct{})
+				batches, pending := ch.support.BlockCutter().Ordered(msg.normalMsg, &self_adaptive_system.ControllerStruct{})
 
 				for _, batch := range batches {
 					block := ch.support.CreateNextBlock(batch)

@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package blockcutter_test
 
 import (
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
+	"github.com/hyperledger/fabric/orderer/common/self-adaptive-system"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
@@ -37,13 +37,13 @@ var _ = Describe("Blockcutter", func() {
 		metrics = &blockcutter.Metrics{
 			BlockFillDuration: fakeBlockFillDuration,
 		}
-		ledgerTransactionCount := prometheus.MetricMonitor{
-			Metric:     prometheus.LedgerTransactionCountRate,
-			MetricType: prometheus.Matrix,
-			Label:      prometheus.Chaincode,
-			StatType:   prometheus.Max,
+		ledgerTransactionCount := self_adaptive_system.MetricMonitor{
+			Metric:     self_adaptive_system.LedgerTransactionCountRate,
+			MetricType: self_adaptive_system.Matrix,
+			Label:      self_adaptive_system.Chaincode,
+			StatType:   self_adaptive_system.Max,
 		}
-		fakeController := prometheus.NewController(&ledgerTransactionCount, 10)
+		fakeController := self_adaptive_system.NewController(&ledgerTransactionCount, 10)
 
 		bc = blockcutter.NewReceiverImpl("mychannel", fakeConfigFetcher, metrics)
 		bc.Cut()

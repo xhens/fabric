@@ -22,7 +22,7 @@ import (
 	"github.com/hyperledger/fabric/bccsp"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/orderer/common/cluster"
-	"github.com/hyperledger/fabric/orderer/common/prometheus"
+	"github.com/hyperledger/fabric/orderer/common/self-adaptive-system"
 	"github.com/hyperledger/fabric/orderer/common/types"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/protoutil"
@@ -620,17 +620,17 @@ func (c *Chain) run() {
 		c.Metrics.IsLeader.Set(0)
 	}
 
-	ledgerTransactionCount := prometheus.MetricMonitor{
-		Metric:     prometheus.LedgerTransactionCountRate,
-		MetricType: prometheus.Matrix,
-		Label:      prometheus.Chaincode,
-		StatType:   prometheus.Max,
+	ledgerTransactionCount := self_adaptive_system.MetricMonitor{
+		Metric:     self_adaptive_system.LedgerTransactionCountRate,
+		MetricType: self_adaptive_system.Matrix,
+		Label:      self_adaptive_system.Chaincode,
+		StatType:   self_adaptive_system.Max,
 	}
 	go ledgerTransactionCount.Run()
-	controller := prometheus.NewController(&ledgerTransactionCount, 5, 13)
-	if controller.FirstMetric != nil {
-		if controller.FirstMetric.Value > float64(controller.SaturationPoint) {
-			controller.CurrentValue = controller.FirstMetric.Value
+	controller := self_adaptive_system.NewController(&ledgerTransactionCount, 5, 13)
+	if controller.Metric != nil {
+		if controller.Metric.Value > float64(controller.MinSaturationPoint) {
+			controller.CurrentMetricValue = controller.Metric.Value
 		}
 	}
 
@@ -836,7 +836,7 @@ func (c *Chain) writeBlock(block *common.Block, index uint64) {
 //   -- pending bool; if there are envelopes pending to be ordered,
 //   -- err error; the error encountered, if any.
 // It takes care of config messages as well as the revalidation of messages if the config sequence has advanced.
-func (c *Chain) ordered(msg *orderer.SubmitRequest, controller *prometheus.ControllerStruct) (batches [][]*common.Envelope, pending bool, err error) {
+func (c *Chain) ordered(msg *orderer.SubmitRequest, controller *self_adaptive_system.ControllerStruct) (batches [][]*common.Envelope, pending bool, err error) {
 	seq := c.support.Sequence()
 
 	if c.isConfig(msg.Payload) {

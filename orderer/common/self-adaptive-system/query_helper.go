@@ -1,8 +1,7 @@
-package prometheus
+package self_adaptive_system
 
 import (
 	"fmt"
-	"log"
 	"strconv"
 )
 
@@ -21,7 +20,7 @@ func extractFirstValueFromSingleQuery(instantVector InstantVectorObject) (float6
 		floatConversion, _ := strconv.ParseFloat(val, 64)
 		return floatConversion, nil
 	} else {
-		log.Printf("Result type unknown %s", instantVector.Data.ResultType)
+		logger.Debugf("Result type unknown %s", instantVector.Data.ResultType)
 		return 0, fmt.Errorf("result type unknown %s", instantVector.Data.ResultType)
 	}
 }
@@ -40,7 +39,7 @@ func extractFirstValueFromGenericQueryRange(rangeVector GenericRangeVector) (KvM
 		}
 		return kvMap, nil
 	} else {
-		log.Printf("result type unknown: %s", rangeVector.Data.ResultType)
+		logger.Debugf("result type unknown: %s", rangeVector.Data.ResultType)
 		return KvMap{}, fmt.Errorf("result type unknown %s", rangeVector.Data.ResultType)
 	}
 }
@@ -78,7 +77,7 @@ func extractStatisticFromGenericQueryRange(rangeVector GenericRangeVector, statT
 		}
 		return kvMap, nil
 	} else {
-		log.Printf("Unknown result type %s", rangeVector.Data.ResultType)
+		logger.Debugf("Unknown result type %s", rangeVector.Data.ResultType)
 		return KvMap{}, fmt.Errorf("result type unknown %s", rangeVector.Data.ResultType)
 	}
 }
@@ -111,7 +110,7 @@ func retrieveStatisticsFromArray(values []float64, statType string) float64 {
 		sum := sumOfFloatSlice(values)
 		return sum
 	default:
-		log.Printf("Unknown stat type %s", statType)
+		logger.Debugf("Unknown stat type %s", statType)
 		return 0.0
 	}
 }
