@@ -60,10 +60,10 @@ var logger = flogging.MustGetLogger("orderer.common.server")
 
 //command line flags
 var (
-	app = kingpin.New("orderer", "Xhens Mod - Hyperledger Fabric orderer node")
+	app = kingpin.New("orderer", "Hyperledger Fabric orderer node")
 
-	_       = app.Command("start", "X - Start the orderer node").Default() // preserved for cli compatibility
-	version = app.Command("version", "X - Show version information!!!")
+	_       = app.Command("start", "Start the orderer node").Default() // preserved for cli compatibility
+	version = app.Command("version", "Show version information")
 
 	clusterTypes = map[string]struct{}{"etcdraft": {}}
 )
@@ -83,8 +83,8 @@ func Main() {
 		logger.Error("failed to parse config: ", err)
 		os.Exit(1)
 	}
-
 	initializeLogging()
+
 	prettyPrintStruct(conf)
 
 	cryptoProvider := factory.GetDefault()
@@ -201,7 +201,7 @@ func Main() {
 		serverConfig.SecOpts.Certificate,
 		[][]byte{clusterClientConfig.SecOpts.Certificate},
 		identityBytes,
-		expirationLogger.Warnf, // This can be used to piggyback a ledgerTransactionCountMetric event in the future
+		expirationLogger.Warnf, // This can be used to piggyback a metric event in the future
 		time.Now(),
 		time.AfterFunc)
 
