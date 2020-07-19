@@ -7,7 +7,6 @@ SPDX-License-Identifier: Apache-2.0
 package blockcutter
 
 import (
-	"fmt"
 	"time"
 
 	cb "github.com/hyperledger/fabric-protos-go/common"
@@ -78,28 +77,21 @@ func (r *receiver) Ordered(msg *cb.Envelope, controller *self_adaptive_system.Co
 	if !ok {
 		logger.Panicf("Could not retrieve orderer config to query batch parameters, block cutting is not possible")
 	}
-	// batchSize := ordererConfig.BatchSize() // TODO: replace the static with a dynamic version (batch, block size)
+	// batchSize := ordererConfig.BatchSize() // Traditional approach: Read batchSize from the configuration.
 
 	batchSize := ordererConfig.BatchSize()
-	fmt.Println("UPDATED batch size ", batchSize)
 	bytes := messageSizeBytes(msg)
 
-	// TODO: First Condition
-	// TODO: replace prints with logs.
 	if bytes > batchSize.PreferredMaxBytes {
-		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), controller.PreferredMaxBytes, bytes)
+		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), self_adaptive_system.PreferredMaxBytes, bytes)
 		if ok == true {
 			ordererConfig.BatchSize().PreferredMaxBytes = newBatchSize.PreferredMaxBytes
-			fmt.Println("Updated attribute: ", ordererConfig.BatchSize().PreferredMaxBytes)
+			logger.Debug("Updated PreferredMaxBytes attribute: ", ordererConfig.BatchSize().PreferredMaxBytes)
 		}
-		fmt.Println("Message Size Bytes larger than preferred max bytes ", bytes)
 		logger.Debugf("The current message, with %v bytes, is larger than the preferred batch size of %v bytes and will be isolated.", bytes, batchSize.PreferredMaxBytes)
-		fmt.Println("size bytes pending batch ", r.pendingBatchSizeBytes)
 		// cut pending batch, if it has any messages
 		if len(r.pendingBatch) > 0 {
-			fmt.Println("cutting here")
 			messageBatch := r.Cut()
-			fmt.Println("cutting message batch ", messageBatch)
 			messageBatches = append(messageBatches, messageBatch)
 		}
 
@@ -111,7 +103,6 @@ func (r *receiver) Ordered(msg *cb.Envelope, controller *self_adaptive_system.Co
 		return
 	}
 
-	// TODO: Second Condition
 	messageWillOverflowBatchSizeBytes := r.pendingBatchSizeBytes+bytes > batchSize.PreferredMaxBytes
 	if messageWillOverflowBatchSizeBytes {
 		logger.Debugf("The current message, with %v bytes, will overflow the pending batch of %v bytes.", bytes, r.pendingBatchSizeBytes)
@@ -124,21 +115,17 @@ func (r *receiver) Ordered(msg *cb.Envelope, controller *self_adaptive_system.Co
 	logger.Debugf("Enqueuing message into batch")
 	r.pendingBatch = append(r.pendingBatch, msg)
 	r.pendingBatchSizeBytes += bytes
-	fmt.Println("SIZE IN BYTES OF PENDING BATCH ", bytes)
-	fmt.Println("LENGTH OF BATCHES BEFORE CUTTING ", len(messageBatches))
 	pending = true
 
-	// TODO: Third condition
 	if uint32(len(r.pendingBatch)) >= batchSize.MaxMessageCount {
-		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), controller.MaxMessageCount, bytes)
+		newBatchSize, ok := controller.Run(ordererConfig.BatchSize(), self_adaptive_system.MaxMessageCount, bytes)
 		if ok == true {
 			ordererConfig.BatchSize().MaxMessageCount = newBatchSize.MaxMessageCount
-			fmt.Println("Updated attribute: ", ordererConfig.BatchSize().MaxMessageCount)
+			logger.Debug("Updated MaxMessageCount attribute: ", ordererConfig.BatchSize().MaxMessageCount)
 		}
 		logger.Debugf("Batch size met, cutting batch")
 		messageBatch := r.Cut()
 		messageBatches = append(messageBatches, messageBatch)
-		fmt.Println("message batch just cut", "MESSAGE BATCHES LENGTH", len(messageBatches)) //TODO: Output length
 		pending = false
 	}
 	return
